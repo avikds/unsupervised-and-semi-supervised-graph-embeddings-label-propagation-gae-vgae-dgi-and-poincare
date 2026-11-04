@@ -2186,3 +2186,81 @@ def train_planetoid(S, X, y, labeled, zc_dim=16, hidden=8, pre=500, joint=200, w
         "Zc_pre": Zc_pre
     }
 
+# Step 25 - poincare_distance
+def poincare_distance(u, v, eps=1e-7):
+    # Calculate squared Euclidean norms of both points.
+    u_norm_sq = (u * u).sum(axis=-1)
+    v_norm_sq = (v * v).sum(axis=-1)
+
+    # Calculate the squared Euclidean distance.
+    diff_norm_sq = ((u - v) * (u - v)).sum(axis=-1)
+
+    # Compute the Poincare distance argument:
+    # x = 1 + 2 * ||u - v||^2 /
+    #     ((1 - ||u||^2) * (1 - ||v||^2)).
+    denominator = (1.0 - u_norm_sq) * (1.0 - v_norm_sq)
+
+    x = 1.0 + 2.0 * diff_norm_sq / denominator
+
+    # Clamp x from below to ensure numerical stability.
+    x = x.clip(1.0 + eps, float("inf"))
+
+    # Calculate acosh(x):
+    # acosh(x) = log(x + sqrt(x - 1) * sqrt(x + 1)).
+    distance = (
+        x + (x - 1.0).sqrt() * (x + 1.0).sqrt()
+    ).log()
+
+    return distance
+
+
+def euclidean_distance(u, v, eps=1e-7):
+    # Calculate the squared Euclidean distance.
+    squared_distance = ((u - v) * (u - v)).sum(axis=-1)
+
+    # Add epsilon before taking the square root.
+    return (squared_distance + eps).sqrt()
+
+
+def tree_softmax_loss(Z, i, j, neg, dist):
+    # Get the number of positive edges and latent dimensions.
+    m = i.shape[0]
+    dim = Z.shape[1]
+
+    # Extract source and destination embeddings for positive edges.
+    Z_i = Z[i]
+    Z_j = Z[j]
+
+    # Calculate distances for positive edges.
+    # Shape: (m,).
+    positive_dist = dist(Z_i, Z_j)
+
+    # Extract embeddings of negative destination nodes.
+    # Shape: (m, K, dim).
+    Z_neg = Z[neg]
+
+    # Expand source embeddings to support broadcasting.
+    # Shape: (m, 1, dim).
+    Z_i_expanded = Z_i.reshape(m, 1, dim)
+
+    # Calculate distances for all negative samples.
+    # Shape: (m, K).
+    negative_dist = dist(Z_i_expanded, Z_neg)
+
+    # Construct the distance matrix.
+    # Column 0 contains the true neighbor distance.
+    # Remaining columns contain negative neighbor distances.
+    all_distances = positive_dist.reshape(m, 1).cat(
+        negative_dist,
+        dim=1
+    )
+
+    # Convert distances into logits by negating them.
+    logits = -all_distances
+
+    # Apply softmax and calculate the negative log-likelihood
+    # of the true neighbor (column 0).
+    loss = -logits.log_softmax(axis=1)[:, 0].mean()
+
+    return loss
+
