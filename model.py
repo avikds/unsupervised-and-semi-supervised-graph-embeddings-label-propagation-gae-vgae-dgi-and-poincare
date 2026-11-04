@@ -1,0 +1,70 @@
+"""
+Unsupervised and Semi-Supervised Graph Embeddings: Label Propagation, GAE/VGAE, DGI and Poincare
+
+Assembled from your step-by-step solutions.
+"""
+
+import numpy as np
+
+# Step 1 - contextual_sbm
+import numpy as np
+
+def contextual_sbm(n=1000, k=5, avg_degree=5.0, homophily=0.8, mu=2.0, d=64, degree_shape=2.5, seed=0):
+    # Initialize a single random number generator.
+    rng = np.random.default_rng([seed, 23])
+
+    # 1. Generate balanced ground-truth labels and randomly permute them.
+    y = rng.permutation(np.arange(n) % k)
+
+    # 2. Generate degree propensities.
+    if degree_shape > 0:
+        theta = rng.pareto(degree_shape, n) + 1.0
+
+        # Cap extreme degree propensities and normalize their mean to one.
+        theta = np.minimum(theta, np.sqrt(n) / 2.0)
+        theta = theta / theta.mean()
+    else:
+        # No degree correction.
+        theta = np.ones(n)
+
+    # 3. Calculate within-class and between-class edge probabilities.
+    p_in = avg_degree * homophily / (n / k)
+    p_out = avg_degree * (1.0 - homophily) / (n - n / k)
+
+    # Assign the appropriate block probability to every node pair.
+    block_rates = np.where(y[:, None] == y[None, :], p_in, p_out)
+
+    # Apply degree correction and clip probabilities to [0, 1].
+    P = block_rates * theta[:, None] * theta[None, :]
+    P = np.clip(P, 0.0, 1.0)
+
+    # Remove self-loop probabilities.
+    np.fill_diagonal(P, 0.0)
+
+    # 4. Sample edges using the true edge probabilities.
+    # Sample only the upper triangular part to avoid duplicate edges.
+    A = np.triu(rng.random((n, n)) < P, 1)
+
+    # Make the adjacency matrix symmetric and convert it to float64.
+    A = (A + A.T).astype(np.float64)
+
+    # 5. Generate one Gaussian class mean per class.
+    M = rng.normal(size=(k, d))
+
+    # Normalize every class mean to unit length.
+    M = M / np.linalg.norm(M, axis=1, keepdims=True)
+
+    # 6. Generate node features using their corresponding class means.
+    X = mu * M[y] + rng.normal(size=(n, d))
+
+    # Convert node features to float32.
+    X = X.astype(np.float32)
+
+    # Return the graph, features, labels, and true edge probabilities.
+    return {
+        "A": A,
+        "X": X,
+        "y": y.astype(np.int64),
+        "P": P
+    }
+
