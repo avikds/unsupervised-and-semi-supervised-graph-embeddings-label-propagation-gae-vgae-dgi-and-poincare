@@ -10,6 +10,11 @@ import numpy as np
 import numpy as np
 from tinygrad import Tensor, TinyJit
 
+try:
+    from tinygrad import Context
+except ImportError:
+    from tinygrad.helpers import Context
+
 def contextual_sbm(n=1000, k=5, avg_degree=5.0, homophily=0.8, mu=2.0, d=64, degree_shape=2.5, seed=0):
     # Initialize a single random number generator.
     rng = np.random.default_rng([seed, 23])
