@@ -2264,3 +2264,34 @@ def tree_softmax_loss(Z, i, j, neg, dist):
 
     return loss
 
+# Step 26 - riemannian_update
+def project_to_ball(Z, eps=1e-5):
+    # Calculate the Euclidean norm of every embedding row.
+    norm = (Z * Z).sum(axis=1).sqrt().reshape(-1, 1)
+
+    # Calculate the scaling factor.
+    # Rows inside the ball remain unchanged.
+    # Rows with norm >= 1 - eps are projected onto the boundary.
+    scale = (
+        (1.0 - eps) / norm.clip(eps, float("inf"))
+    ).clip(0.0, 1.0)
+
+    # Return a new projected Tensor without modifying the input.
+    return Z * scale
+
+
+def riemannian_update(Z, grad, lr, eps=1e-5):
+    # Calculate the squared Euclidean norm of each embedding row.
+    norm_sq = (Z * Z).sum(axis=1).reshape(-1, 1)
+
+    # Calculate the inverse Poincare metric factor:
+    # (1 - ||z||^2)^2 / 4.
+    metric_factor = ((1.0 - norm_sq) ** 2) / 4.0
+
+    # Scale the Euclidean gradient according to the
+    # Riemannian metric and perform the gradient update.
+    Z_new = Z - lr * metric_factor * grad
+
+    # Project the updated embeddings back into the Poincare ball.
+    return project_to_ball(Z_new, eps=eps)
+
