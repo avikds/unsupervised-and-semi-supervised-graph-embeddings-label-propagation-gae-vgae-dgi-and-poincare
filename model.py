@@ -232,3 +232,61 @@ def dirichlet_energy(W, F):
     # Return the result as a Python float.
     return float(energy)
 
+# Step 5 - harmonic_labels
+def harmonic_labels(W, labeled, y_labeled, k):
+    # Convert inputs to NumPy arrays with the required data types.
+    W = np.asarray(W, dtype=np.float64)
+    labeled = np.asarray(labeled, dtype=np.int64)
+    y_labeled = np.asarray(y_labeled, dtype=np.int64)
+
+    # Get the total number of nodes.
+    n = W.shape[0]
+
+    # Identify unlabeled nodes in increasing index order.
+    mask = np.ones(n, dtype=bool)
+    mask[labeled] = False
+    unlabeled = np.flatnonzero(mask)
+
+    # Initialize the label-score matrix.
+    F = np.zeros((n, k), dtype=np.float64)
+
+    # Assign one-hot label vectors to the labeled nodes.
+    F[labeled, y_labeled] = 1.0
+
+    # If every node is labeled, return the initialized matrix.
+    if len(unlabeled) == 0:
+        return F
+
+    # Construct one-hot label vectors for the labeled nodes.
+    Y_L = F[labeled]
+
+    # Calculate the full graph degree vector.
+    # Important: degrees must include connections to both labeled
+    # and unlabeled nodes.
+    degree = W.sum(axis=1)
+
+    # Extract the unlabeled-to-unlabeled adjacency submatrix.
+    W_UU = W[np.ix_(unlabeled, unlabeled)]
+
+    # Extract the unlabeled-to-labeled adjacency submatrix.
+    W_UL = W[np.ix_(unlabeled, labeled)]
+
+    # Construct the unlabeled graph Laplacian block.
+    # D_UU uses the full graph degrees, not just W_UU row sums.
+    L_UU = np.diag(degree[unlabeled]) - W_UU
+
+    # Add a small ridge term to keep the system numerically solvable.
+    L_UU += 1e-9 * np.eye(len(unlabeled), dtype=np.float64)
+
+    # Construct the right-hand side of the linear system.
+    rhs = W_UL @ Y_L
+
+    # Solve:
+    # (D_UU - W_UU + 1e-9 I) F_U = W_UL Y_L
+    F_U = np.linalg.solve(L_UU, rhs)
+
+    # Assign the computed harmonic scores to unlabeled nodes.
+    F[unlabeled] = F_U
+
+    return F
+
