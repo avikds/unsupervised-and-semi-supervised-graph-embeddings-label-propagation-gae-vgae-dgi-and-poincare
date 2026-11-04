@@ -8,6 +8,7 @@ import numpy as np
 
 # Step 1 - contextual_sbm
 import numpy as np
+from tinygrad import Tensor, TinyJit
 
 def contextual_sbm(n=1000, k=5, avg_degree=5.0, homophily=0.8, mu=2.0, d=64, degree_shape=2.5, seed=0):
     # Initialize a single random number generator.
