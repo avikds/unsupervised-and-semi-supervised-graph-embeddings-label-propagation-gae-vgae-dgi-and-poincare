@@ -619,3 +619,54 @@ def adjusted_rand_index(a, b):
     # Return the result as a Python float.
     return float(ari)
 
+# Step 9 - laplacian_eigenmaps
+def laplacian_eigenmaps(W, dim, tau=0.0):
+    # Convert the adjacency matrix to float64.
+    W = np.asarray(W, dtype=np.float64)
+
+    # Get the number of nodes.
+    N = W.shape[0]
+
+    # Add tau / N to every entry of the adjacency matrix.
+    # This provides regularization and can connect disconnected components.
+    Wt = W + tau / N
+
+    # Calculate the degree of each node.
+    degree = Wt.sum(axis=1)
+
+    # Calculate D^(-1/2).
+    # Use zero for nodes having zero degree.
+    inv_sqrt_degree = np.zeros(N, dtype=np.float64)
+
+    np.divide(
+        1.0,
+        np.sqrt(degree),
+        out=inv_sqrt_degree,
+        where=degree > 0
+    )
+
+    # Construct the symmetric normalized adjacency matrix:
+    # S = D^(-1/2) @ Wt @ D^(-1/2).
+    S = (
+        inv_sqrt_degree[:, None]
+        * Wt
+        * inv_sqrt_degree[None, :]
+    )
+
+    # Construct the symmetric normalized graph Laplacian:
+    # L_sym = I - D^(-1/2) @ Wt @ D^(-1/2).
+    L_sym = np.eye(N, dtype=np.float64) - S
+
+    # Compute all eigenvalues and eigenvectors.
+    # np.linalg.eigh returns eigenvalues in ascending order.
+    eigenvalues, eigenvectors = np.linalg.eigh(L_sym)
+
+    # Skip the first eigenvector and select the next 'dim' eigenvectors.
+    selected_eigenvectors = eigenvectors[:, 1:dim + 1]
+
+    # Map the selected eigenvectors back through D^(-1/2).
+    Z = inv_sqrt_degree[:, None] * selected_eigenvectors
+
+    # Return the embedding matrix and all ascending eigenvalues.
+    return Z, eigenvalues
+
