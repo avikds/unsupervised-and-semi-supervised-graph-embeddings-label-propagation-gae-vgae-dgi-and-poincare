@@ -1248,7 +1248,12 @@ def gae_full_loss(Z, A, pos_weight=None):
         if positive_count == 0:
             raise ValueError("A must contain at least one positive entry.")
 
-        pos_weight = (total_entries - positive_count) / positive_count
+        pos_weight = (
+            total_entries - positive_count
+        ) / positive_count
+
+    # Convert the weight into a Python float.
+    pos_weight = float(pos_weight)
 
     # Inner-product decoder: W_hat = Z @ Z.T.
     logits = Z @ Z.T
