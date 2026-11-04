@@ -1196,3 +1196,65 @@ def pair_auc(S, pos_pairs, neg_pairs):
     # Calculate AUC using the previously implemented function.
     return link_auc(pos_scores, neg_scores)
 
+# Step 16 - gae_full_loss
+def gae_full_loss(Z, A, pos_weight=None):
+    # Get the number of nodes.
+    n = A.shape[0]
+
+    # Validate the adjacency matrix dimensions.
+    if A.shape != (n, n):
+        raise ValueError("A must be a square adjacency matrix.")
+
+    # Calculate the positive-class weight if not provided.
+    if pos_weight is None:
+        positive_count = float(A.sum().item())
+        total_entries = n * n
+
+        if positive_count == 0:
+            raise ValueError("A must contain at least one positive entry.")
+
+        pos_weight = (total_entries - positive_count) / positive_count
+
+    # Inner-product decoder: W_hat = Z @ Z.T.
+    logits = Z @ Z.T
+
+    # Weighted sigmoid cross-entropy.
+    # Use logsigmoid for numerical stability.
+    positive_loss = pos_weight * A * logits.logsigmoid()
+
+    negative_loss = (1.0 - A) * (-logits).logsigmoid()
+
+    # Average over all N^2 entries.
+    loss = -(positive_loss + negative_loss).mean()
+
+    return loss
+
+
+def gae_sampled_loss(Z, pos, neg):
+    # Extract source and destination indices for positive edges.
+    pos_src = pos[:, 0]
+    pos_dst = pos[:, 1]
+
+    # Calculate inner-product logits for positive edges.
+    pos_logits = (
+        Z[pos_src] * Z[pos_dst]
+    ).sum(axis=1)
+
+    # Extract source and destination indices for negative edges.
+    neg_src = neg[:, 0]
+    neg_dst = neg[:, 1]
+
+    # Calculate inner-product logits for negative edges.
+    neg_logits = (
+        Z[neg_src] * Z[neg_dst]
+    ).sum(axis=1)
+
+    # Positive-edge reconstruction loss.
+    positive_loss = -pos_logits.logsigmoid().mean()
+
+    # Negative-edge reconstruction loss.
+    negative_loss = -(-neg_logits).logsigmoid().mean()
+
+    # Return the sum of the two mean losses.
+    return positive_loss + negative_loss
+
