@@ -1605,3 +1605,85 @@ def dgi_loss(Z, Z_neg, Wb, fake_summary=False):
 
     return loss
 
+# Step 20 - train_dgi
+def train_dgi(A, X, dim=256, steps=200, lr=0.001, seed=0):
+
+    # Get the number of nodes.
+    N = X.shape[0]
+
+    # 1. Precompute the normalized adjacency matrix and node features.
+    Ahat = Tensor(
+        gcn_normalize(A)
+    ).realize()
+
+    Xt = Tensor(
+        np.asarray(X, dtype=np.float32)
+    ).realize()
+
+    # 2. Create the GCN encoder.
+    enc = GCNEncoder(
+        X.shape[1],
+        dim,
+        dim,
+        seed=seed
+    )
+
+    # Initialize the bilinear discriminator weight matrix.
+    rng_wb = np.random.default_rng(seed + 1000)
+
+    Wb = glorot(
+        rng_wb,
+        dim,
+        dim
+    )
+
+    # Define the embedding function.
+    # ReLU is applied to the final GCN output.
+    def embed(features):
+        return enc(Ahat, features).relu()
+
+    # 3. Generate a fresh random permutation of node features
+    # at every training iteration.
+    def batch_fn(rng):
+        perm = rng.permutation(N).astype(np.int32)
+
+        # Return the permutation as a one-element tuple.
+        return (perm,)
+
+    # 4. Define the DGI reconstruction/contrastive objective.
+    def recon(perm):
+        # Embeddings from the original graph features.
+        Z = embed(Xt)
+
+        # Embeddings from shuffled (corrupted) node features.
+        Z_neg = embed(Xt[perm])
+
+        # Calculate the Deep Graph Infomax loss.
+        return dgi_loss(
+            Z,
+            Z_neg,
+            Wb
+        )
+
+    # 5. Train the encoder and discriminator together.
+    # No supervised labels or graph reconstruction are used.
+    hist = edm_fit(
+        enc.parameters() + [Wb],
+        alpha=0.0,
+        beta=1.0,
+        recon=recon,
+        batch_fn=batch_fn,
+        steps=steps,
+        lr=lr,
+        seed=seed
+    )
+
+    # 6. Compute the final embeddings using the original features.
+    Z = embed(Xt).realize().numpy()
+
+    # Return the embeddings and training history.
+    return {
+        "Z": np.asarray(Z, dtype=np.float32),
+        "hist": hist
+    }
+
