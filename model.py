@@ -2615,3 +2615,112 @@ def reconstruction_metrics(D, A):
 
     return mean_rank, mean_ap
 
+# Step 29 - classical_mds
+def classical_mds(D, dim):
+    # Convert the distance matrix to float64.
+    D = np.asarray(D, dtype=np.float64)
+
+    # Validate the distance matrix.
+    if D.ndim != 2 or D.shape[0] != D.shape[1]:
+        raise ValueError("D must be a square distance matrix.")
+
+    # Get the number of nodes.
+    N = D.shape[0]
+
+    if dim < 0:
+        raise ValueError("dim must be non-negative.")
+
+    # Handle an empty distance matrix or zero-dimensional embedding.
+    Z = np.zeros((N, dim), dtype=np.float64)
+
+    if N == 0 or dim == 0:
+        return Z
+
+    # 1. Square all pairwise distances.
+    D2 = D ** 2
+
+    # 2. Construct the centering matrix:
+    # J = I - (1/N) * 11.T.
+    J = np.eye(N, dtype=np.float64) - np.ones(
+        (N, N), dtype=np.float64
+    ) / N
+
+    # 3. Construct the double-centered Gram matrix:
+    # B = -0.5 * J @ D2 @ J.
+    B = -0.5 * J @ D2 @ J
+
+    # Ensure numerical symmetry.
+    B = (B + B.T) / 2.0
+
+    # 4. Compute the eigendecomposition.
+    eigenvalues, eigenvectors = np.linalg.eigh(B)
+
+    # Sort eigenvalues in decreasing order.
+    indices = np.argsort(eigenvalues)[::-1]
+
+    # Select at most 'dim' largest eigenvalues.
+    num_components = min(dim, N)
+    indices = indices[:num_components]
+
+    selected_values = eigenvalues[indices]
+    selected_vectors = eigenvectors[:, indices]
+
+    # Treat negative eigenvalues as zero.
+    selected_values = np.maximum(selected_values, 0.0)
+
+    # 5. Construct the MDS coordinates:
+    # Z = V @ sqrt(Lambda).
+    #
+    # Eigenvectors are scaled column-wise by sqrt(eigenvalues).
+    Z[:, :num_components] = (
+        selected_vectors * np.sqrt(selected_values)[None, :]
+    )
+
+    return Z
+
+
+def average_distortion(D_emb, D_true):
+    # Convert both distance matrices to float64.
+    D_emb = np.asarray(D_emb, dtype=np.float64)
+    D_true = np.asarray(D_true, dtype=np.float64)
+
+    # Validate matrix dimensions.
+    if D_emb.ndim != 2 or D_true.ndim != 2:
+        raise ValueError("Both distance matrices must be two-dimensional.")
+
+    if D_emb.shape != D_true.shape:
+        raise ValueError("Distance matrices must have identical shapes.")
+
+    if D_true.shape[0] != D_true.shape[1]:
+        raise ValueError("Distance matrices must be square.")
+
+    # Get the number of nodes.
+    N = D_true.shape[0]
+
+    # Use only the strict upper triangle to avoid duplicate pairs.
+    upper_i, upper_j = np.triu_indices(N, k=1)
+
+    # Handle matrices with fewer than two nodes.
+    if len(upper_i) == 0:
+        return 0.0
+
+    # Extract embedding and true distances.
+    emb_distances = D_emb[upper_i, upper_j]
+    true_distances = D_true[upper_i, upper_j]
+
+    # Calculate pairwise distance ratios.
+    rho = emb_distances / true_distances
+
+    # Calculate the mean ratio.
+    c = rho.mean()
+
+    # Handle the degenerate case where all embedding distances are zero.
+    if c == 0.0:
+        return 0.0
+
+    # Calculate average relative distortion after optimal uniform rescaling.
+    distortion = np.mean(np.abs(rho / c - 1.0))
+
+    # Return a Python float.
+    return float(distortion)
+
