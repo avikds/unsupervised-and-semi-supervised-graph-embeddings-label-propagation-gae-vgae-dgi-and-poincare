@@ -1687,3 +1687,108 @@ def train_dgi(A, X, dim=256, steps=200, lr=0.001, seed=0):
         "hist": hist
     }
 
+# Step 21 - linear_probe
+def linear_probe(Z, y, train_idx, test_idx, l2=1e-3, steps=300, lr=0.05, seed=0):
+    # Convert inputs to NumPy arrays.
+    Z = np.asarray(Z, dtype=np.float32)
+    y = np.asarray(y, dtype=np.int64)
+    train_idx = np.asarray(train_idx, dtype=np.int64)
+    test_idx = np.asarray(test_idx, dtype=np.int64)
+
+    # Determine the number of input dimensions and classes.
+    n, d = Z.shape
+    k = int(y.max()) + 1
+
+    # 1. Standardize each embedding dimension using all nodes.
+    mean = Z.mean(axis=0)
+    std = Z.std(axis=0)
+
+    Z_std = ((Z - mean) / (std + 1e-6)).astype(np.float32)
+
+    # Extract standardized training and testing embeddings.
+    Z_train = Tensor(
+        Z_std[train_idx]
+    ).contiguous().realize()
+
+    Z_test = Tensor(
+        Z_std[test_idx]
+    ).contiguous().realize()
+
+    # Convert training labels into one-hot encoded vectors.
+    Y_train = np.eye(k, dtype=np.float32)[y[train_idx]]
+
+    Y_train_t = Tensor(
+        Y_train
+    ).contiguous().realize()
+
+    # 2. Initialize the softmax regression parameters.
+    # Both weights and bias are initialized to zero.
+    W = Tensor.zeros(d, k).contiguous().realize()
+    b = Tensor.zeros(k).contiguous().realize()
+
+    # Define the supervised cross-entropy loss.
+    def sup():
+        # Compute class logits.
+        logits = Z_train @ W + b
+
+        # Calculate numerically stable log probabilities.
+        log_probs = logits.log_softmax(axis=1)
+
+        # Mean cross-entropy over the training nodes.
+        return -(Y_train_t * log_probs).sum(axis=1).mean()
+
+    # Define L2 regularization on the weight matrix only.
+    def reg():
+        return (W * W).sum()
+
+    # Train softmax regression using the shared GraphEDM trainer.
+    edm_fit(
+        [W, b],
+        sup=sup,
+        reg=reg,
+        alpha=1.0,
+        gamma=l2,
+        steps=steps,
+        lr=lr,
+        seed=seed
+    )
+
+    # 3. Evaluate the trained classifier on the test nodes.
+    test_logits = Z_test @ W + b
+
+    # Obtain predicted class labels.
+    predictions = test_logits.argmax(axis=1).numpy()
+
+    # Calculate test accuracy as a Python float.
+    accuracy = np.mean(
+        predictions == y[test_idx]
+    )
+
+    return float(accuracy)
+
+
+def smoothed_features(A, X, hops=2):
+    # Convert the node feature matrix to a NumPy array.
+    X = np.asarray(X)
+
+    # Validate the number of smoothing iterations.
+    if hops < 0:
+        raise ValueError("hops must be non-negative.")
+
+    # Zero hops returns the original features unchanged.
+    if hops == 0:
+        return X
+
+    # Calculate the normalized adjacency matrix.
+    # This includes self-loops through gcn_normalize().
+    Ahat = gcn_normalize(A)
+
+    # Initialize the smoothed features.
+    H = X.copy()
+
+    # Repeatedly apply normalized graph convolution.
+    for _ in range(hops):
+        H = Ahat @ H
+
+    return H
+
