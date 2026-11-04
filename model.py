@@ -2295,3 +2295,193 @@ def riemannian_update(Z, grad, lr, eps=1e-5):
     # Project the updated embeddings back into the Poincare ball.
     return project_to_ball(Z_new, eps=eps)
 
+# Step 27 - train_tree_embedding
+def sample_tree_negatives(rng, A, u, K):
+    # Convert inputs to NumPy arrays.
+    A = np.asarray(A)
+    u = np.asarray(u, dtype=np.int64).reshape(-1)
+
+    # Get the number of nodes.
+    N = len(A)
+
+    # Draw initial negative samples uniformly.
+    neg = rng.integers(
+        0,
+        N,
+        size=(len(u), K)
+    )
+
+    # Identify invalid samples:
+    # 1. The sampled node is the source node itself.
+    # 2. The sampled node is a direct neighbor of the source.
+    invalid = (
+        (neg == u[:, None])
+        | (A[u[:, None], neg] != 0)
+    )
+
+    # Redraw exactly the invalid entries until all samples are valid.
+    while np.any(invalid):
+        count = int(invalid.sum())
+
+        neg[invalid] = rng.integers(
+            0,
+            N,
+            size=count
+        )
+
+        # Recheck the newly sampled entries.
+        invalid = (
+            (neg == u[:, None])
+            | (A[u[:, None], neg] != 0)
+        )
+
+    return neg
+
+
+def train_tree_embedding(A, dim=2, geometry="poincare", steps=2000, lr=10.0, K=20, burn=200, burn_factor=0.1, seed=0):
+
+    # Convert the adjacency matrix to a NumPy array.
+    A = np.asarray(A)
+
+    # Validate the embedding geometry.
+    if geometry not in ("poincare", "euclidean"):
+        raise ValueError(
+            "geometry must be either 'poincare' or 'euclidean'."
+        )
+
+    # Get the number of nodes.
+    N = len(A)
+
+    # Initialize the random number generator.
+    rng = np.random.default_rng(seed)
+
+    # 1. Initialize node embeddings uniformly near the origin.
+    Z_init = rng.uniform(
+        -1e-3,
+        1e-3,
+        size=(N, dim)
+    ).astype(np.float32)
+
+    # Convert to a contiguous, realized tinygrad Tensor.
+    Z = Tensor(Z_init).contiguous().realize()
+
+    # 2. Extract all directed edges from the adjacency matrix.
+    i_np, j_np = np.nonzero(A)
+
+    # Convert edge indices into int32 Tensors.
+    i = Tensor(
+        i_np.astype(np.int32)
+    ).contiguous().realize()
+
+    j = Tensor(
+        j_np.astype(np.int32)
+    ).contiguous().realize()
+
+    # Number of directed edges.
+    m = len(i_np)
+
+    if N == 0 or m == 0:
+        raise ValueError("A must contain at least one node and one edge.")
+
+    # Select the appropriate distance function.
+    if geometry == "poincare":
+        dist = poincare_distance
+    else:
+        dist = euclidean_distance
+
+    # -------------------------------------------------
+    # 3. Define one TinyJit training step.
+    # -------------------------------------------------
+
+    def train_step(neg, lr_t):
+
+        # Calculate the tree softmax loss.
+        loss = tree_softmax_loss(
+            Z,
+            i,
+            j,
+            neg,
+            dist
+        )
+
+        # Calculate the Euclidean gradient.
+        # Scale it by the directed edge count divided by N.
+        grad = loss.gradient(Z)[0] * (m / N)
+
+        # Update embeddings according to the selected geometry.
+        if geometry == "poincare":
+
+            # Riemannian SGD followed by projection.
+            Z.assign(
+                riemannian_update(
+                    Z,
+                    grad,
+                    lr_t
+                )
+            ).realize()
+
+        else:
+
+            # Ordinary Euclidean gradient descent.
+            Z.assign(
+                Z - lr_t * grad
+            ).realize()
+
+        # Return the scalar loss.
+        return loss.realize()
+
+    # Compile the training step.
+    jit_step = TinyJit(train_step)
+
+    # -------------------------------------------------
+    # 4. Training loop.
+    # -------------------------------------------------
+
+    history = []
+
+    for t in range(steps):
+
+        # Sample negative destinations for every edge source.
+        neg_np = sample_tree_negatives(
+            rng,
+            A,
+            i_np,
+            K
+        ).astype(np.int32)
+
+        # Convert negative samples into a realized Tensor.
+        neg = Tensor(neg_np).contiguous().realize()
+
+        # Apply learning-rate burn-in.
+        # Use a smaller learning rate during the first burn steps.
+        current_lr = (
+            lr * burn_factor
+            if t < burn
+            else lr
+        )
+
+        # Pass the learning rate as a one-element float32 Tensor.
+        lr_t = Tensor(
+            np.asarray([current_lr], dtype=np.float32)
+        ).contiguous().realize()
+
+        # Execute one JIT-compiled training iteration.
+        loss = jit_step(neg, lr_t)
+
+        # Record the loss at the required iterations.
+        if t == 0 or (t + 1) % 500 == 0 or t == steps - 1:
+            history.append(
+                (int(t), float(loss.item()))
+            )
+
+    # -------------------------------------------------
+    # 5. Return final embeddings and loss history.
+    # -------------------------------------------------
+
+    Z_numpy = Z.realize().numpy()
+
+    return (
+        np.asarray(Z_numpy, dtype=np.float32),
+        history
+    )
+
