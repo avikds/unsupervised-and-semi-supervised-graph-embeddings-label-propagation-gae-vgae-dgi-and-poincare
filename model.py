@@ -670,3 +670,78 @@ def laplacian_eigenmaps(W, dim, tau=0.0):
     # Return the embedding matrix and all ascending eigenvalues.
     return Z, eigenvalues
 
+# Step 10 - deepwalk_similarity
+def window_weights(T, window="dynamic"):
+    # Validate the window size.
+    if T < 1:
+        raise ValueError("T must be a positive integer.")
+
+    # Fixed window: every distance receives equal probability.
+    if window == "fixed":
+        return np.full(T, 1.0 / T, dtype=np.float64)
+
+    # Dynamic window:
+    # A window size is sampled uniformly from {1, 2, ..., T}.
+    # A context at distance q is included whenever the sampled
+    # window size is at least q.
+    elif window == "dynamic":
+        q = np.arange(1, T + 1, dtype=np.float64)
+
+        # P(Q = q) is proportional to the number of window sizes
+        # that include distance q, namely T - q + 1.
+        weights = T - q + 1.0
+
+        # Normalize the weights so that they sum to one.
+        weights /= weights.sum()
+
+        return weights.astype(np.float64)
+
+    else:
+        raise ValueError("window must be either 'dynamic' or 'fixed'.")
+
+
+def deepwalk_similarity(W, T, window="dynamic"):
+    # Convert the adjacency matrix to float64.
+    W = np.asarray(W, dtype=np.float64)
+
+    # Validate the adjacency matrix.
+    if W.ndim != 2 or W.shape[0] != W.shape[1]:
+        raise ValueError("W must be a square adjacency matrix.")
+
+    # Get the number of nodes.
+    n = W.shape[0]
+
+    # Obtain the context-window distance weights.
+    weights = window_weights(T, window)
+
+    # Calculate the degree of each node.
+    degree = W.sum(axis=1)
+
+    # Construct the row-normalized transition matrix:
+    # P = D^(-1) @ W.
+    # Isolated nodes retain all-zero rows.
+    P = np.zeros_like(W, dtype=np.float64)
+
+    np.divide(
+        W,
+        degree[:, None],
+        out=P,
+        where=degree[:, None] != 0
+    )
+
+    # Initialize the DeepWalk similarity matrix.
+    similarity = np.zeros((n, n), dtype=np.float64)
+
+    # Start with the first transition-matrix power.
+    power = P.copy()
+
+    # Compute the weighted sum:
+    # S(W) = sum_{q=1}^T P(Q=q) * P^q.
+    for q in range(T):
+        similarity += weights[q] * power
+
+        # Calculate the next transition-matrix power.
+        power = power @ P
+
+    return similarity
+
