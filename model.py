@@ -1106,3 +1106,93 @@ def link_split(A, val_frac=0.05, test_frac=0.10, seed=0):
         "test_neg": test_neg.astype(np.int64)
     }
 
+# Step 15 - link_auc
+def link_auc(pos, neg):
+    # Convert the positive and negative scores to NumPy arrays.
+    pos = np.asarray(pos, dtype=np.float64)
+    neg = np.asarray(neg, dtype=np.float64)
+
+    # Validate the input arrays.
+    if pos.ndim != 1 or neg.ndim != 1:
+        raise ValueError("pos and neg must be one-dimensional arrays.")
+
+    n_pos = len(pos)
+    n_neg = len(neg)
+
+    # AUC is undefined if either class has no observations.
+    if n_pos == 0 or n_neg == 0:
+        return float("nan")
+
+    # Combine positive and negative scores.
+    scores = np.concatenate((pos, neg))
+
+    # Store the original positions of positive scores.
+    positive_mask = np.concatenate((
+        np.ones(n_pos, dtype=bool),
+        np.zeros(n_neg, dtype=bool)
+    ))
+
+    # Sort scores in ascending order using a stable sort.
+    order = np.argsort(scores, kind="mergesort")
+    sorted_scores = scores[order]
+
+    # Identify the starting positions of groups of tied scores.
+    starts = np.concatenate((
+        np.array([0]),
+        np.flatnonzero(sorted_scores[1:] != sorted_scores[:-1]) + 1
+    ))
+
+    # Identify the ending positions of each tied-score group.
+    ends = np.concatenate((
+        starts[1:],
+        np.array([len(scores)])
+    ))
+
+    # Calculate average ranks for tied groups.
+    # Ranks are one-based.
+    average_ranks = (starts + 1 + ends) / 2.0
+
+    # Assign the average ranks to all observations.
+    sorted_ranks = np.repeat(
+        average_ranks,
+        ends - starts
+    )
+
+    # Restore the ranks to their original observation order.
+    ranks = np.empty(len(scores), dtype=np.float64)
+    ranks[order] = sorted_ranks
+
+    # Calculate the sum of ranks belonging to positive scores.
+    rank_sum_positive = ranks[positive_mask].sum()
+
+    # Calculate the Mann-Whitney U statistic.
+    U = rank_sum_positive - n_pos * (n_pos + 1) / 2.0
+
+    # Calculate AUC.
+    auc = U / (n_pos * n_neg)
+
+    return float(auc)
+
+
+def pair_auc(S, pos_pairs, neg_pairs):
+    # Convert inputs to NumPy arrays.
+    S = np.asarray(S)
+    pos_pairs = np.asarray(pos_pairs, dtype=np.int64)
+    neg_pairs = np.asarray(neg_pairs, dtype=np.int64)
+
+    # Validate the pair array dimensions.
+    if pos_pairs.ndim != 2 or pos_pairs.shape[1] != 2:
+        raise ValueError("pos_pairs must have shape (m, 2).")
+
+    if neg_pairs.ndim != 2 or neg_pairs.shape[1] != 2:
+        raise ValueError("neg_pairs must have shape (m, 2).")
+
+    # Extract predicted scores for positive edges.
+    pos_scores = S[pos_pairs[:, 0], pos_pairs[:, 1]]
+
+    # Extract predicted scores for negative edges.
+    neg_scores = S[neg_pairs[:, 0], neg_pairs[:, 1]]
+
+    # Calculate AUC using the previously implemented function.
+    return link_auc(pos_scores, neg_scores)
+
