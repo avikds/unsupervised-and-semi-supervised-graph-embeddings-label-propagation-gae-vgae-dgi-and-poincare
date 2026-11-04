@@ -1932,3 +1932,81 @@ def train_gcn_classifier(A, X, y, labeled, hidden=32, dim=16, beta=0.0, wd=5e-4,
     # Return the (N, k) NumPy array of class logits.
     return np.asarray(logits, dtype=np.float32)
 
+# Step 23 - sample_context_pairs
+def context_cdf(S):
+    # Convert the similarity matrix to float64.
+    S = np.asarray(S, dtype=np.float64)
+
+    # Make a copy so that the original matrix is not modified.
+    S = S.copy()
+
+    # Get the number of nodes.
+    N = S.shape[0]
+
+    # Calculate the sum of every row.
+    row_sums = S.sum(axis=1)
+
+    # Handle isolated nodes (rows with zero total probability).
+    # Assign a self-loop so that the node's only context is itself.
+    isolated = row_sums == 0.0
+    S[isolated] = 0.0
+    S[np.flatnonzero(isolated), np.flatnonzero(isolated)] = 1.0
+
+    # Recalculate row sums after handling isolated nodes.
+    row_sums = S.sum(axis=1)
+
+    # Normalize every row into a probability distribution.
+    S = S / row_sums[:, None]
+
+    # Calculate the row-wise cumulative distribution function.
+    cdf = np.cumsum(S, axis=1)
+
+    return cdf
+
+
+def sample_context_pairs(cdf, m, rng, neg_frac=0.5):
+    # Convert the CDF to a NumPy array.
+    cdf = np.asarray(cdf, dtype=np.float64)
+
+    # Get the number of nodes.
+    N = cdf.shape[0]
+
+    # 1. Draw centre nodes.
+    i = rng.integers(0, N, m)
+
+    # 2. Draw uniform random numbers for inverse-CDF sampling.
+    u = rng.random(m)
+
+    # 3. Draw random numbers to determine positive/negative pairs.
+    coin = rng.random(m)
+
+    # 4. Draw uniformly random context nodes for negative pairs.
+    other = rng.integers(0, N, m)
+
+    # Sample positive contexts using inverse-CDF sampling.
+    # Each context is selected according to its row probability.
+    context = (cdf[i] < u[:, None]).sum(axis=1)
+
+    # Ensure that the selected context index is within [0, N-1].
+    context = np.clip(context, 0, N - 1)
+
+    # Select negative samples when coin < neg_frac.
+    is_negative = coin < neg_frac
+
+    # Initialize context indices.
+    j = context.copy()
+
+    # Replace positive contexts with uniformly sampled nodes
+    # for the negative samples.
+    j[is_negative] = other[is_negative]
+
+    # Assign +1 to positive pairs and -1 to negative pairs.
+    gamma = np.where(is_negative, -1.0, 1.0)
+
+    # Return indices as int32 and labels as float32.
+    return (
+        i.astype(np.int32),
+        j.astype(np.int32),
+        gamma.astype(np.float32)
+    )
+
