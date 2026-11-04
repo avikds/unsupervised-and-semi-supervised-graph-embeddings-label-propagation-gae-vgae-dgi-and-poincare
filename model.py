@@ -1792,3 +1792,143 @@ def smoothed_features(A, X, hops=2):
 
     return H
 
+# Step 22 - train_gcn_classifier
+def train_gcn_classifier(A, X, y, labeled, hidden=32, dim=16, beta=0.0, wd=5e-4, steps=200, lr=0.01, seed=0):
+
+    # Convert inputs to NumPy arrays.
+    A = np.asarray(A)
+    X = np.asarray(X, dtype=np.float32)
+    y = np.asarray(y, dtype=np.int64)
+    labeled = np.asarray(labeled, dtype=np.int64)
+
+    # Get the number of nodes and classes.
+    N = X.shape[0]
+    k = int(y.max()) + 1
+
+    # Validate the labeled node indices.
+    if len(labeled) == 0:
+        raise ValueError("At least one labeled node is required.")
+
+    # 1. Prepare the normalized adjacency matrix and node features.
+    Ahat = Tensor(
+        gcn_normalize(A)
+    ).realize()
+
+    Xt = Tensor(X).realize()
+
+    # 2. Create the GCN encoder.
+    enc = GCNEncoder(
+        X.shape[1],
+        hidden,
+        dim,
+        seed=seed
+    )
+
+    # Initialize the classification weight matrix independently.
+    Wc = glorot(
+        np.random.default_rng(seed + 1000),
+        dim,
+        k
+    )
+
+    # Build a full-size one-hot target matrix.
+    # Unlabeled nodes have all-zero target rows.
+    Y = np.zeros((N, k), dtype=np.float32)
+
+    Y[labeled] = np.eye(k, dtype=np.float32)[y[labeled]]
+
+    Yt = Tensor(Y).realize()
+
+    # 3. Define the supervised classification loss.
+    def sup():
+        # Generate node embeddings using the GCN encoder.
+        Z = enc(Ahat, Xt)
+
+        # Calculate class logits for every node.
+        logits = Z @ Wc
+
+        # Compute log probabilities using softmax.
+        log_probs = logits.log_softmax(axis=1)
+
+        # Calculate mean cross-entropy over labeled nodes only.
+        return -(Yt * log_probs).sum() / len(labeled)
+
+    # 4. Define L2 regularization on the GCN encoder.
+    # The classification head Wc is intentionally excluded.
+    def reg():
+        return (
+            (enc.W1 * enc.W1).sum()
+            + (enc.W2 * enc.W2).sum()
+        )
+
+    # -------------------------------------------------
+    # 5. Configure optional graph reconstruction.
+    # -------------------------------------------------
+
+    recon = None
+    batch_fn = None
+
+    if beta != 0.0:
+
+        # Extract all undirected positive edges from the
+        # upper triangular part of the original adjacency matrix.
+        pos_array = np.column_stack(
+            np.nonzero(np.triu(A, k=1))
+        ).astype(np.int32)
+
+        # Convert positive edges into a realized int32 Tensor.
+        pos = Tensor(pos_array).contiguous().realize()
+
+        # Number of undirected positive edges.
+        m = len(pos_array)
+
+        # Generate m negative pairs for each training iteration.
+        def batch_fn(rng):
+            neg = rng.integers(
+                0,
+                N,
+                size=(m, 2),
+                dtype=np.int32
+            )
+
+            return (neg,)
+
+        # Define the sampled graph reconstruction loss.
+        def recon(neg):
+            Z = enc(Ahat, Xt)
+
+            return gae_sampled_loss(
+                Z,
+                pos,
+                neg
+            )
+
+    # -------------------------------------------------
+    # 6. Train using the shared GraphEDM trainer.
+    # -------------------------------------------------
+
+    edm_fit(
+        enc.parameters() + [Wc],
+        sup=sup,
+        recon=recon,
+        reg=reg,
+        alpha=1.0,
+        beta=beta,
+        gamma=wd,
+        batch_fn=batch_fn,
+        steps=steps,
+        lr=lr,
+        seed=seed
+    )
+
+    # -------------------------------------------------
+    # 7. Calculate final logits for all nodes.
+    # -------------------------------------------------
+
+    Z = enc(Ahat, Xt)
+
+    logits = (Z @ Wc).realize().numpy()
+
+    # Return the (N, k) NumPy array of class logits.
+    return np.asarray(logits, dtype=np.float32)
+
