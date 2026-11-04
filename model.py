@@ -333,3 +333,99 @@ def node_accuracy(F, y, idx):
     # Return accuracy as a Python float.
     return float(accuracy)
 
+# Step 7 - label_spreading
+def label_spreading(W, labeled, y_labeled, k, alpha=0.9):
+    # Convert inputs to NumPy arrays with the required data types.
+    W = np.asarray(W, dtype=np.float64)
+    labeled = np.asarray(labeled, dtype=np.int64)
+    y_labeled = np.asarray(y_labeled, dtype=np.int64)
+
+    # Get the number of nodes.
+    n = W.shape[0]
+
+    # Initialize the label matrix with zeros.
+    Y = np.zeros((n, k), dtype=np.float64)
+
+    # Assign one-hot label vectors to the labeled nodes.
+    Y[labeled, y_labeled] = 1.0
+
+    # Calculate the degree of each node.
+    degree = W.sum(axis=1)
+
+    # Calculate inverse square roots of node degrees.
+    # Isolated nodes receive a factor of zero.
+    inv_sqrt_degree = np.zeros(n, dtype=np.float64)
+
+    np.divide(
+        1.0,
+        np.sqrt(degree),
+        out=inv_sqrt_degree,
+        where=degree > 0
+    )
+
+    # Construct the symmetrically normalized adjacency matrix:
+    # S = D^(-1/2) @ W @ D^(-1/2).
+    S = (
+        inv_sqrt_degree[:, None]
+        * W
+        * inv_sqrt_degree[None, :]
+    )
+
+    # Construct the identity matrix.
+    I = np.eye(n, dtype=np.float64)
+
+    # Construct the coefficient matrix:
+    # I - alpha * S.
+    M = I - alpha * S
+
+    # Solve the linear system:
+    # (I - alpha * S) F = (1 - alpha) * Y.
+    F = np.linalg.solve(M, (1.0 - alpha) * Y)
+
+    return F
+
+
+def spreading_objective(W, F, Y, mu):
+    # Convert inputs to NumPy arrays with float64 precision.
+    W = np.asarray(W, dtype=np.float64)
+    F = np.asarray(F, dtype=np.float64)
+    Y = np.asarray(Y, dtype=np.float64)
+
+    # Get the number of nodes.
+    n = W.shape[0]
+
+    # Calculate the degree of each node.
+    degree = W.sum(axis=1)
+
+    # Calculate inverse square roots of node degrees.
+    # Isolated nodes receive a factor of zero.
+    inv_sqrt_degree = np.zeros(n, dtype=np.float64)
+
+    np.divide(
+        1.0,
+        np.sqrt(degree),
+        out=inv_sqrt_degree,
+        where=degree > 0
+    )
+
+    # Construct the symmetrically normalized adjacency matrix.
+    S = (
+        inv_sqrt_degree[:, None]
+        * W
+        * inv_sqrt_degree[None, :]
+    )
+
+    # Construct the normalized graph Laplacian.
+    L = np.eye(n, dtype=np.float64) - S
+
+    # Calculate the graph smoothness term:
+    # trace(F.T @ (I - S) @ F).
+    smoothness = np.trace(F.T @ L @ F)
+
+    # Calculate the label-fitting term:
+    # mu * sum_i ||F_i - Y_i||^2.
+    fidelity = mu * np.sum((F - Y) ** 2)
+
+    # Combine both terms and return a Python float.
+    return float(smoothness + fidelity)
+
