@@ -1299,8 +1299,16 @@ def gae_sampled_loss(Z, pos, neg):
     return positive_loss + negative_loss
 
 # Step 17 - train_gae
-def train_gae(split, X, hidden=32, dim=16, loss="sampled", steps=200, lr=0.01, seed=0):
-
+def train_gae(
+    split,
+    X,
+    hidden=32,
+    dim=16,
+    loss="sampled",
+    steps=200,
+    lr=0.01,
+    seed=0
+):
     # Get the number of nodes.
     N = X.shape[0]
 
@@ -1362,10 +1370,27 @@ def train_gae(split, X, hidden=32, dim=16, loss="sampled", steps=200, lr=0.01, s
 
     elif loss == "full":
 
-        # Convert the training adjacency matrix into a float32 Tensor.
-        At = Tensor(
-            np.asarray(split["A_train"], dtype=np.float32)
-        ).realize()
+        # Calculate the positive-class weight using NumPy
+        # before entering TinyJit.
+        A_train_np = np.asarray(
+            split["A_train"],
+            dtype=np.float32
+        )
+
+        positive_count = float(A_train_np.sum())
+        total_entries = A_train_np.size
+
+        if positive_count == 0:
+            raise ValueError(
+                "A_train must contain at least one positive entry."
+            )
+
+        pos_weight = (
+            total_entries - positive_count
+        ) / positive_count
+
+        # Convert the training adjacency matrix into a Tensor.
+        At = Tensor(A_train_np).realize()
 
         # Full weighted reconstruction loss.
         def recon():
@@ -1373,14 +1398,18 @@ def train_gae(split, X, hidden=32, dim=16, loss="sampled", steps=200, lr=0.01, s
 
             return gae_full_loss(
                 Z,
-                At
+                At,
+                pos_weight=pos_weight
             )
 
     elif loss == "full_unweighted":
 
         # Convert the training adjacency matrix into a float32 Tensor.
         At = Tensor(
-            np.asarray(split["A_train"], dtype=np.float32)
+            np.asarray(
+                split["A_train"],
+                dtype=np.float32
+            )
         ).realize()
 
         # Full reconstruction loss with positive weight equal to 1.
