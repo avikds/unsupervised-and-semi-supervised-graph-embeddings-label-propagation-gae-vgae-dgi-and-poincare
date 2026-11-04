@@ -1258,3 +1258,127 @@ def gae_sampled_loss(Z, pos, neg):
     # Return the sum of the two mean losses.
     return positive_loss + negative_loss
 
+# Step 17 - train_gae
+def train_gae(split, X, hidden=32, dim=16, loss="sampled", steps=200, lr=0.01, seed=0):
+
+    # Get the number of nodes.
+    N = X.shape[0]
+
+    # 1. Prepare the training adjacency matrix and node features.
+    # Only A_train is allowed to reach the encoder.
+    Ahat = Tensor(
+        gcn_normalize(split["A_train"])
+    ).realize()
+
+    Xt = Tensor(
+        np.asarray(X, dtype=np.float32)
+    ).realize()
+
+    # 2. Create the two-layer GCN encoder.
+    enc = GCNEncoder(
+        X.shape[1],
+        hidden,
+        dim,
+        seed=seed
+    )
+
+    # 3. Convert training positive edges into an int32 Tensor.
+    pos_array = np.asarray(
+        split["train"],
+        dtype=np.int32
+    )
+
+    pos = Tensor(pos_array).contiguous().realize()
+
+    # Number of positive training edges.
+    m = len(split["train"])
+
+    # 4. Configure the reconstruction objective.
+    batch_fn = None
+
+    if loss == "sampled":
+
+        # Generate m random negative node pairs for every step.
+        # The shape and dtype remain constant for TinyJit.
+        def batch_fn(rng):
+            neg = rng.integers(
+                0,
+                N,
+                size=(m, 2),
+                dtype=np.int32
+            )
+
+            return (neg,)
+
+        # Sampled positive-negative reconstruction loss.
+        def recon(neg):
+            Z = enc(Ahat, Xt)
+
+            return gae_sampled_loss(
+                Z,
+                pos,
+                neg
+            )
+
+    elif loss == "full":
+
+        # Convert the training adjacency matrix into a float32 Tensor.
+        At = Tensor(
+            np.asarray(split["A_train"], dtype=np.float32)
+        ).realize()
+
+        # Full weighted reconstruction loss.
+        def recon():
+            Z = enc(Ahat, Xt)
+
+            return gae_full_loss(
+                Z,
+                At
+            )
+
+    elif loss == "full_unweighted":
+
+        # Convert the training adjacency matrix into a float32 Tensor.
+        At = Tensor(
+            np.asarray(split["A_train"], dtype=np.float32)
+        ).realize()
+
+        # Full reconstruction loss with positive weight equal to 1.
+        def recon():
+            Z = enc(Ahat, Xt)
+
+            return gae_full_loss(
+                Z,
+                At,
+                pos_weight=1.0
+            )
+
+    else:
+        raise ValueError(
+            "loss must be 'sampled', 'full', or 'full_unweighted'."
+        )
+
+    # 5. Train the GAE using the shared GraphEDM trainer.
+    # alpha = 0 removes the supervised loss.
+    # beta = 1 assigns full weight to graph reconstruction.
+    hist = edm_fit(
+        enc.parameters(),
+        recon=recon,
+        alpha=0.0,
+        beta=1.0,
+        batch_fn=batch_fn,
+        steps=steps,
+        lr=lr,
+        seed=seed
+    )
+
+    # 6. Compute the final node embeddings.
+    Z = enc(Ahat, Xt).realize().numpy()
+
+    # Return embeddings, encoder, and training history.
+    return {
+        "Z": np.asarray(Z, dtype=np.float32),
+        "enc": enc,
+        "hist": hist
+    }
+
