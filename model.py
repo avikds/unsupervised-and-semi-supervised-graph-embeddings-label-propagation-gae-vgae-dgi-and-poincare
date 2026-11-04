@@ -290,3 +290,46 @@ def harmonic_labels(W, labeled, y_labeled, k):
 
     return F
 
+# Step 6 - class_mass_normalize
+def class_mass_normalize(F, y_labeled, k):
+    # Convert inputs to NumPy arrays.
+    F = np.asarray(F, dtype=np.float64)
+    y_labeled = np.asarray(y_labeled, dtype=np.int64)
+
+    # 1. Estimate class proportions using add-one smoothing.
+    # q[c] = (count of class c + 1) / (number of labeled nodes + k).
+    class_counts = np.bincount(y_labeled, minlength=k)
+    q = (class_counts + 1.0) / (len(y_labeled) + k)
+
+    # 2. Calculate the total predicted mass of each class.
+    m = F.sum(axis=0)
+
+    # 3. Prevent division by zero for classes with negligible mass.
+    m = np.maximum(m, 1e-12)
+
+    # Rescale each class column to match its estimated class proportion.
+    G = F * (q / m)[None, :]
+
+    # Return a new normalized prediction matrix.
+    return G
+
+
+def node_accuracy(F, y, idx):
+    # Convert inputs to NumPy arrays.
+    F = np.asarray(F)
+    y = np.asarray(y)
+    idx = np.asarray(idx, dtype=np.int64)
+
+    # Predict node labels using the highest-scoring class.
+    predictions = np.argmax(F, axis=1)
+
+    # Handle an empty evaluation index array.
+    if len(idx) == 0:
+        return 0.0
+
+    # Calculate accuracy on the specified nodes.
+    accuracy = np.mean(predictions[idx] == y[idx])
+
+    # Return accuracy as a Python float.
+    return float(accuracy)
+
