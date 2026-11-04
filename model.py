@@ -805,3 +805,101 @@ def netmf_embedding(W, T=5, b=1.0, dim=16):
     # Return source and target embeddings.
     return Zs, Zt
 
+# Step 12 - edm_fit
+from tinygrad.nn.optim import Adam
+
+
+def edm_fit(params, sup=None, recon=None, reg=None, alpha=1.0, beta=1.0, gamma=0.0, batch_fn=None, steps=200, lr=0.01, seed=0):
+
+    # Determine which loss terms are active.
+    use_sup = sup is not None and alpha != 0
+    use_recon = recon is not None and beta != 0
+    use_reg = reg is not None and gamma != 0
+
+    # At least one loss term must be active.
+    if not (use_sup or use_recon or use_reg):
+        raise ValueError("At least one weighted loss term must be active.")
+
+    params = list(params)
+
+    # Initialize the random number generator.
+    rng = np.random.default_rng(seed)
+
+    # Initialize Adam optimizer.
+    optimizer = Adam(
+        params,
+        lr=lr,
+        b1=0.9,
+        b2=0.999,
+        eps=1e-8
+    )
+
+    # Define the training step.
+    def train_step(*batch):
+        optimizer.zero_grad()
+
+        loss = None
+
+        # Supervised loss.
+        if use_sup:
+            loss = alpha * sup()
+
+        # Graph reconstruction loss.
+        if use_recon:
+            recon_loss = beta * recon(*batch)
+            loss = recon_loss if loss is None else loss + recon_loss
+
+        # Regularization loss.
+        if use_reg:
+            reg_loss = gamma * reg()
+            loss = reg_loss if loss is None else loss + reg_loss
+
+        # Backpropagation.
+        loss.backward()
+
+        # Update parameters using Adam.
+        optimizer.step()
+
+        return loss.realize()
+
+    # Compile the training step.
+    jit_train_step = TinyJit(train_step)
+
+    history = []
+
+    # IMPORTANT:
+    # tinygrad requires training mode to be enabled
+    # before calling optimizer.step().
+    previous_training = Tensor.training
+    Tensor.training = True
+
+    try:
+        for t in range(steps):
+
+            # Generate a fresh minibatch for every iteration.
+            if use_recon and batch_fn is not None:
+                batch_arrays = batch_fn(rng)
+
+                # Convert NumPy arrays into realized Tensors.
+                batch = tuple(
+                    Tensor(x).realize()
+                    for x in batch_arrays
+                )
+            else:
+                batch = ()
+
+            # Execute one JIT-compiled training iteration.
+            loss = jit_train_step(*batch)
+
+            # Record the loss at the required iterations.
+            if t == 0 or (t + 1) % 50 == 0 or t == steps - 1:
+                history.append(
+                    (int(t), float(loss.item()))
+                )
+
+    finally:
+        # Restore the previous tinygrad training state.
+        Tensor.training = previous_training
+
+    return history
+
