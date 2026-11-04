@@ -2010,3 +2010,179 @@ def sample_context_pairs(cdf, m, rng, neg_frac=0.5):
         gamma.astype(np.float32)
     )
 
+# Step 24 - train_planetoid
+def train_planetoid(S, X, y, labeled, zc_dim=16, hidden=8, pre=500, joint=200, wd=0.05, m=2000, lr=0.01, seed=0):
+
+    # Convert inputs to NumPy arrays.
+    X = np.asarray(X, dtype=np.float32)
+    y = np.asarray(y, dtype=np.int64)
+    labeled = np.asarray(labeled, dtype=np.int64)
+
+    # Get the number of nodes, feature dimensions, and classes.
+    N, D = X.shape
+    k = int(y.max()) + 1
+
+    if len(labeled) == 0:
+        raise ValueError("At least one labeled node is required.")
+
+    # Initialize the random number generator.
+    rng0 = np.random.default_rng(seed)
+
+    # -------------------------------------------------
+    # 1. Initialize the lookup table and weight matrices.
+    # -------------------------------------------------
+
+    # Initialize the node context embedding lookup table.
+    Zc = Tensor(
+        rng0.normal(
+            0.0,
+            0.1,
+            size=(N, zc_dim)
+        ).astype(np.float32)
+    ).contiguous().realize()
+
+    # Initialize the feature encoder weight matrix.
+    W1 = glorot(rng0, D, hidden)
+
+    # Initialize the classification weight matrix.
+    # Input dimensions = context dimensions + hidden dimensions.
+    W2 = glorot(rng0, zc_dim + hidden, k)
+
+    # Convert node features to a realized Tensor.
+    Xt = Tensor(X).contiguous().realize()
+
+    # -------------------------------------------------
+    # 2. Prepare the DeepWalk context distribution.
+    # -------------------------------------------------
+
+    # Convert the DeepWalk similarity matrix into row-wise CDFs.
+    cdf = context_cdf(S)
+
+    # -------------------------------------------------
+    # 3. Define the context-pair sampling function.
+    # -------------------------------------------------
+
+    def batch_fn(rng):
+        # Sample context pairs using the precomputed CDF.
+        # Returns:
+        # i: center node indices
+        # j: context node indices
+        # gamma: +1 for positive pairs, -1 for negative pairs.
+        return sample_context_pairs(
+            cdf,
+            m,
+            rng
+        )
+
+    # -------------------------------------------------
+    # 4. Define the context reconstruction loss.
+    # -------------------------------------------------
+
+    def context_loss(i, j, gamma):
+        # Calculate the dot product between center and context embeddings.
+        scores = (Zc[i] * Zc[j]).sum(axis=1)
+
+        # Apply positive/negative labels and calculate
+        # the numerically stable logistic loss.
+        return -(scores * gamma).logsigmoid().mean()
+
+    # -------------------------------------------------
+    # 5. Stage 1: Context pretraining.
+    # -------------------------------------------------
+
+    # Train only the context embedding lookup table.
+    edm_fit(
+        [Zc],
+        recon=context_loss,
+        alpha=0.0,
+        beta=1.0,
+        batch_fn=batch_fn,
+        steps=pre,
+        lr=lr,
+        seed=seed
+    )
+
+    # Save a NumPy copy of the pretrained context embeddings.
+    Zc_pre = Zc.realize().numpy().copy()
+
+    # -------------------------------------------------
+    # 6. Prepare supervised classification targets.
+    # -------------------------------------------------
+
+    # Construct a full-size one-hot label matrix.
+    # Unlabeled nodes have zero target rows.
+    Y = np.zeros((N, k), dtype=np.float32)
+
+    Y[labeled] = np.eye(k, dtype=np.float32)[y[labeled]]
+
+    Yt = Tensor(Y).contiguous().realize()
+
+    # -------------------------------------------------
+    # 7. Define the supervised classification loss.
+    # -------------------------------------------------
+
+    def sup():
+        # Feature-based encoder without graph convolution.
+        H = (Xt @ W1).relu()
+
+        # Concatenate context embeddings and feature embeddings.
+        Z_combined = Zc.cat(H, dim=1)
+
+        # Calculate classification logits.
+        logits = Z_combined @ W2
+
+        # Compute log probabilities for all nodes.
+        log_probs = logits.log_softmax(axis=1)
+
+        # Calculate cross-entropy only on labeled nodes.
+        return -(Yt * log_probs).sum() / len(labeled)
+
+    # -------------------------------------------------
+    # 8. Define regularization.
+    # -------------------------------------------------
+
+    def reg():
+        # Regularize the feature encoder and classification head.
+        # The context lookup table Zc is not regularized here.
+        return (
+            (W1 * W1).sum()
+            + (W2 * W2).sum()
+        )
+
+    # -------------------------------------------------
+    # 9. Stage 2: Joint training.
+    # -------------------------------------------------
+
+    # Jointly optimize the context embeddings,
+    # feature encoder, and classification head.
+    edm_fit(
+        [Zc, W1, W2],
+        sup=sup,
+        recon=context_loss,
+        reg=reg,
+        alpha=1.0,
+        beta=1.0,
+        gamma=wd,
+        batch_fn=batch_fn,
+        steps=joint,
+        lr=lr,
+        seed=seed
+    )
+
+    # -------------------------------------------------
+    # 10. Compute final logits for all nodes.
+    # -------------------------------------------------
+
+    H_final = (Xt @ W1).relu()
+
+    Z_combined = Zc.cat(H_final, dim=1)
+
+    logits = (Z_combined @ W2).realize().numpy()
+
+    # Return final classification logits and context embeddings.
+    return {
+        "logits": np.asarray(logits, dtype=np.float32),
+        "Zc": Zc.realize().numpy().copy(),
+        "Zc_pre": Zc_pre
+    }
+
