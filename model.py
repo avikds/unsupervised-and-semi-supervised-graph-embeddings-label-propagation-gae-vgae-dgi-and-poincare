@@ -987,3 +987,122 @@ class GCNEncoder:
 
         return Z
 
+# Step 14 - link_split
+def link_split(A, val_frac=0.05, test_frac=0.10, seed=0):
+    # Convert the adjacency matrix to a NumPy array.
+    A = np.asarray(A)
+
+    # Get the number of nodes.
+    N = A.shape[0]
+
+    # Initialize the random number generator with the specified seed.
+    rng = np.random.default_rng([seed, 31])
+
+    # -------------------------------------------------
+    # 1. Extract and shuffle undirected positive edges.
+    # -------------------------------------------------
+
+    # Extract only the upper-triangular edges (i < j).
+    edges = np.column_stack(
+        np.nonzero(np.triu(A, k=1))
+    ).astype(np.int64)
+
+    # Get the total number of undirected edges.
+    E_count = len(edges)
+
+    # Shuffle the edge rows using the specified RNG.
+    edges = edges[rng.permutation(E_count)]
+
+    # -------------------------------------------------
+    # 2. Split positive edges into validation, test,
+    #    and training sets.
+    # -------------------------------------------------
+
+    # Determine the number of validation and test edges.
+    nv = int(E_count * val_frac)
+    nt = int(E_count * test_frac)
+
+    # Validation positives are the first nv shuffled edges.
+    val_pos = edges[:nv].copy()
+
+    # Test positives are the next nt shuffled edges.
+    test_pos = edges[nv:nv + nt].copy()
+
+    # Remaining edges are used for training.
+    train = edges[nv + nt:].copy()
+
+    # -------------------------------------------------
+    # 3. Construct the training adjacency matrix.
+    # -------------------------------------------------
+
+    # Initialize an empty symmetric float64 adjacency matrix.
+    A_train = np.zeros((N, N), dtype=np.float64)
+
+    # Insert only the training edges.
+    if len(train) > 0:
+        A_train[train[:, 0], train[:, 1]] = 1.0
+        A_train[train[:, 1], train[:, 0]] = 1.0
+
+    # -------------------------------------------------
+    # 4. Sample negative edges.
+    # -------------------------------------------------
+
+    # Check whether enough non-edges are available.
+    total_possible_edges = N * (N - 1) // 2
+    available_negatives = total_possible_edges - E_count
+
+    if nv + nt > available_negatives:
+        raise ValueError("Not enough non-edges available for validation and test negatives.")
+
+    # Maintain a set of already selected negative edges.
+    used_negatives = set()
+
+    # Generate validation negatives first, followed by test negatives.
+    negative_sets = []
+
+    for count in (nv, nt):
+
+        negatives = []
+
+        # Continue sampling until the required number is reached.
+        while len(negatives) < count:
+
+            # Draw two node indices using the specified RNG.
+            a, b = rng.integers(0, N, 2)
+
+            # Skip self-loops.
+            if a == b:
+                continue
+
+            # Ensure that the edge is represented as (i, j), i < j.
+            i, j = (a, b) if a < b else (b, a)
+
+            # Skip existing edges and previously selected negatives.
+            if A[i, j] != 0 or (i, j) in used_negatives:
+                continue
+
+            # Keep this negative edge.
+            used_negatives.add((i, j))
+            negatives.append((i, j))
+
+        # Convert the negative edges into an int64 array.
+        negative_sets.append(
+            np.asarray(negatives, dtype=np.int64).reshape(-1, 2)
+        )
+
+    # Separate validation and test negative edges.
+    val_neg, test_neg = negative_sets
+
+    # -------------------------------------------------
+    # 5. Return all data splits.
+    # -------------------------------------------------
+
+    return {
+        "A_train": A_train,
+        "train": train.astype(np.int64),
+        "val_pos": val_pos.astype(np.int64),
+        "test_pos": test_pos.astype(np.int64),
+        "val_neg": val_neg.astype(np.int64),
+        "test_neg": test_neg.astype(np.int64)
+    }
+
