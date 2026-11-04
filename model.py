@@ -810,8 +810,19 @@ def netmf_embedding(W, T=5, b=1.0, dim=16):
 from tinygrad.nn.optim import Adam
 
 
-def edm_fit(params, sup=None, recon=None, reg=None, alpha=1.0, beta=1.0, gamma=0.0, batch_fn=None, steps=200, lr=0.01, seed=0):
-
+def edm_fit(
+    params,
+    sup=None,
+    recon=None,
+    reg=None,
+    alpha=1.0,
+    beta=1.0,
+    gamma=0.0,
+    batch_fn=None,
+    steps=200,
+    lr=0.01,
+    seed=0
+):
     # Determine which loss terms are active.
     use_sup = sup is not None and alpha != 0
     use_recon = recon is not None and beta != 0
@@ -819,7 +830,9 @@ def edm_fit(params, sup=None, recon=None, reg=None, alpha=1.0, beta=1.0, gamma=0
 
     # At least one loss term must be active.
     if not (use_sup or use_recon or use_reg):
-        raise ValueError("At least one weighted loss term must be active.")
+        raise ValueError(
+            "At least one weighted loss term must be active."
+        )
 
     params = list(params)
 
@@ -848,12 +861,20 @@ def edm_fit(params, sup=None, recon=None, reg=None, alpha=1.0, beta=1.0, gamma=0
         # Graph reconstruction loss.
         if use_recon:
             recon_loss = beta * recon(*batch)
-            loss = recon_loss if loss is None else loss + recon_loss
+            loss = (
+                recon_loss
+                if loss is None
+                else loss + recon_loss
+            )
 
         # Regularization loss.
         if use_reg:
             reg_loss = gamma * reg()
-            loss = reg_loss if loss is None else loss + reg_loss
+            loss = (
+                reg_loss
+                if loss is None
+                else loss + reg_loss
+            )
 
         # Backpropagation.
         loss.backward()
@@ -868,10 +889,11 @@ def edm_fit(params, sup=None, recon=None, reg=None, alpha=1.0, beta=1.0, gamma=0
 
     history = []
 
-    # IMPORTANT:
-    # tinygrad requires training mode to be enabled
-    # before calling optimizer.step().
-    previous_training = Tensor.training
+    # Preserve the previous tinygrad training state.
+    had_training_attribute = hasattr(Tensor, "training")
+    previous_training = getattr(Tensor, "training", False)
+
+    # Enable training mode for the optimizer.
     Tensor.training = True
 
     try:
@@ -893,14 +915,21 @@ def edm_fit(params, sup=None, recon=None, reg=None, alpha=1.0, beta=1.0, gamma=0
             loss = jit_train_step(*batch)
 
             # Record the loss at the required iterations.
-            if t == 0 or (t + 1) % 50 == 0 or t == steps - 1:
+            if (
+                t == 0
+                or (t + 1) % 50 == 0
+                or t == steps - 1
+            ):
                 history.append(
                     (int(t), float(loss.item()))
                 )
 
     finally:
         # Restore the previous tinygrad training state.
-        Tensor.training = previous_training
+        if had_training_attribute:
+            Tensor.training = previous_training
+        else:
+            delattr(Tensor, "training")
 
     return history
 
