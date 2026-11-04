@@ -68,3 +68,51 @@ def contextual_sbm(n=1000, k=5, avg_degree=5.0, homophily=0.8, mu=2.0, d=64, deg
         "P": P
     }
 
+# Step 2 - edge_homophily
+def edge_homophily(A, y):
+    # Find all undirected edges by considering only the upper triangle.
+    src, dst = np.where(np.triu(A > 0, k=1))
+
+    # Handle graphs with no undirected edges.
+    if len(src) == 0:
+        return 0.0
+
+    # Count edges whose endpoints have the same ground-truth label.
+    same_label = (y[src] == y[dst])
+
+    # Return the fraction of same-label edges as a Python float.
+    return float(np.mean(same_label))
+
+
+def few_labels(y, n_per_class, seed=0):
+    # Initialize the random number generator with the specified seed.
+    rng = np.random.default_rng([seed, 29])
+
+    # Store the randomly selected labeled node indices.
+    labeled = []
+
+    # Draw exactly n_per_class nodes from each class, in class order.
+    for c in range(int(y.max()) + 1):
+        class_nodes = np.flatnonzero(y == c)
+
+        selected = rng.choice(
+            class_nodes,
+            size=n_per_class,
+            replace=False
+        )
+
+        labeled.append(selected)
+
+    # Concatenate the selected indices while preserving class order.
+    labeled = np.concatenate(labeled).astype(np.int64)
+
+    # Create a Boolean mask identifying selected nodes.
+    selected_mask = np.zeros(len(y), dtype=bool)
+    selected_mask[labeled] = True
+
+    # Collect all remaining node indices in increasing order.
+    rest = np.flatnonzero(~selected_mask).astype(np.int64)
+
+    # Return labeled and unlabeled node indices.
+    return labeled, rest
+
