@@ -172,3 +172,63 @@ def tree_distances(parent):
     # Return the symmetric all-pairs shortest-path distance matrix.
     return D
 
+# Step 4 - label_propagation
+def label_propagation(W, labeled, y_labeled, k, n_iter=100):
+    # Convert inputs to NumPy arrays.
+    W = np.asarray(W, dtype=np.float64)
+    labeled = np.asarray(labeled, dtype=np.int64)
+    y_labeled = np.asarray(y_labeled, dtype=np.int64)
+
+    # Get the number of nodes.
+    n = W.shape[0]
+
+    # Initialize the label-score matrix with zeros.
+    F = np.zeros((n, k), dtype=np.float64)
+
+    # Assign one-hot label vectors to the labeled nodes.
+    F[labeled, y_labeled] = 1.0
+
+    # Calculate the degree of each node.
+    degree = W.sum(axis=1)
+
+    # Construct the row-normalized transition matrix.
+    # Rows with zero degree remain all zeros.
+    P = np.zeros_like(W, dtype=np.float64)
+    np.divide(
+        W,
+        degree[:, None],
+        out=P,
+        where=degree[:, None] != 0
+    )
+
+    # Repeatedly propagate label information through the graph.
+    for _ in range(n_iter):
+        # Average the neighboring nodes' label scores.
+        F = P @ F
+
+        # Keep the originally labeled nodes fixed.
+        F[labeled] = 0.0
+        F[labeled, y_labeled] = 1.0
+
+    return F
+
+
+def dirichlet_energy(W, F):
+    # Convert inputs to floating-point NumPy arrays.
+    W = np.asarray(W, dtype=np.float64)
+    F = np.asarray(F, dtype=np.float64)
+
+    # Calculate the degree matrix.
+    degree = W.sum(axis=1)
+    D = np.diag(degree)
+
+    # Construct the graph Laplacian.
+    L = D - W
+
+    # Calculate the Dirichlet energy:
+    # 2 * trace(F.T @ (D - W) @ F).
+    energy = 2.0 * np.trace(F.T @ L @ F)
+
+    # Return the result as a Python float.
+    return float(energy)
+
