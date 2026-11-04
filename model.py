@@ -745,3 +745,63 @@ def deepwalk_similarity(W, T, window="dynamic"):
 
     return similarity
 
+# Step 11 - netmf_embedding
+def netmf_embedding(W, T=5, b=1.0, dim=16):
+    # Convert the adjacency matrix to float64.
+    W = np.asarray(W, dtype=np.float64)
+
+    # Get the number of nodes.
+    n = W.shape[0]
+
+    # 1. Compute the DeepWalk similarity matrix.
+    # Reuse the deepwalk_similarity function from Step 3.
+    S = deepwalk_similarity(W, T)
+
+    # Calculate the graph volume (sum of all adjacency entries).
+    vol = float(W.sum())
+
+    # 2. Calculate the inverse node degrees.
+    degree = W.sum(axis=1)
+
+    # Use zero for the inverse degree of isolated nodes.
+    inv_degree = np.zeros(n, dtype=np.float64)
+
+    np.divide(
+        1.0,
+        degree,
+        out=inv_degree,
+        where=degree > 0
+    )
+
+    # Construct the NetMF matrix:
+    # M = (vol / b) * S * D^(-1).
+    # Right multiplication by D^(-1) scales columns.
+    M = (vol / b) * S * inv_degree[None, :]
+
+    # Apply the element-wise logarithm:
+    # L = log(max(M, 1)).
+    L = np.log(np.maximum(M, 1.0))
+
+    # 3. Symmetrize the resulting matrix.
+    L = (L + L.T) / 2.0
+
+    # Compute the eigenvalue decomposition of the symmetric matrix.
+    eigenvalues, eigenvectors = np.linalg.eigh(L)
+
+    # 4. Select the eigenpairs with the largest absolute eigenvalues.
+    indices = np.argsort(np.abs(eigenvalues))[::-1][:dim]
+
+    lam = eigenvalues[indices]
+    V = eigenvectors[:, indices]
+
+    # Construct the source embeddings:
+    # Zs = V * sqrt(abs(lam)).
+    Zs = V * np.sqrt(np.abs(lam))[None, :]
+
+    # Construct the target embeddings:
+    # Zt = Zs * sign(lam).
+    Zt = Zs * np.sign(lam)[None, :]
+
+    # Return source and target embeddings.
+    return Zs, Zt
+
