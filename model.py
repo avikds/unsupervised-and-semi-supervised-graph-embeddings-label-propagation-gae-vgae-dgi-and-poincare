@@ -429,3 +429,193 @@ def spreading_objective(W, F, Y, mu):
     # Combine both terms and return a Python float.
     return float(smoothness + fidelity)
 
+# Step 8 - kmeans
+def kmeans(Z, k, seed=0, n_init=5, n_iter=50):
+    # Convert the embedding matrix to float64.
+    Z = np.asarray(Z, dtype=np.float64)
+
+    # Validate the input dimensions and parameters.
+    if Z.ndim != 2:
+        raise ValueError("Z must be a two-dimensional array.")
+
+    n, d = Z.shape
+
+    if n == 0 or d == 0:
+        raise ValueError("Z must contain at least one point and one feature.")
+
+    if k < 1 or k > n:
+        raise ValueError("k must be between 1 and the number of points.")
+
+    if n_init < 1 or n_iter < 1:
+        raise ValueError("n_init and n_iter must be positive.")
+
+    # Use one random number generator shared across all restarts.
+    rng = np.random.default_rng(seed)
+
+    best_labels = None
+    best_inertia = np.inf
+
+    # Run multiple independent K-means restarts.
+    for _ in range(n_init):
+
+        # -------------------------------------------------
+        # 1. K-means++ initialization.
+        # -------------------------------------------------
+
+        centers = np.empty((k, d), dtype=np.float64)
+
+        # Select the first center uniformly at random.
+        first_idx = rng.integers(n)
+        centers[0] = Z[first_idx]
+
+        # Select the remaining centers using squared distances.
+        for c in range(1, k):
+
+            # Calculate squared distances to the nearest existing center.
+            d2 = np.min(
+                np.sum(
+                    (Z[:, None, :] - centers[None, :c, :]) ** 2,
+                    axis=2
+                ),
+                axis=1
+            )
+
+            # Select the next center using the K-means++ probability.
+            total_distance = d2.sum()
+
+            if total_distance == 0:
+                # All points coincide with existing centers.
+                next_idx = rng.integers(n)
+            else:
+                probabilities = d2 / total_distance
+                next_idx = rng.choice(n, p=probabilities)
+
+            centers[c] = Z[next_idx]
+
+        # -------------------------------------------------
+        # 2. Lloyd's algorithm.
+        # -------------------------------------------------
+
+        # Initialize assignments so the first iteration runs.
+        labels = np.full(n, -1, dtype=np.int64)
+
+        for _ in range(n_iter):
+
+            # Calculate squared distances from every point to every center.
+            distances = np.sum(
+                (Z[:, None, :] - centers[None, :, :]) ** 2,
+                axis=2
+            )
+
+            # Assign each point to its nearest center.
+            new_labels = np.argmin(distances, axis=1).astype(np.int64)
+
+            # Check whether any point changed its cluster assignment.
+            unchanged = np.array_equal(labels, new_labels)
+
+            labels = new_labels
+
+            # Update every non-empty cluster center to its mean.
+            for c in range(k):
+                members = Z[labels == c]
+
+                if len(members) > 0:
+                    centers[c] = members.mean(axis=0)
+
+                # Empty clusters retain their previous centers.
+
+            # Stop early if cluster assignments have not changed.
+            if unchanged:
+                break
+
+        # -------------------------------------------------
+        # 3. Calculate within-cluster sum of squares.
+        # -------------------------------------------------
+
+        inertia = np.sum((Z - centers[labels]) ** 2)
+
+        # Keep the restart with the lowest inertia.
+        if inertia < best_inertia:
+            best_inertia = inertia
+            best_labels = labels.copy()
+
+    # Return the best clustering as an int64 array.
+    return best_labels.astype(np.int64)
+
+
+def adjusted_rand_index(a, b):
+    # Convert inputs to NumPy arrays.
+    a = np.asarray(a)
+    b = np.asarray(b)
+
+    # Both label arrays must be one-dimensional and have equal length.
+    if a.ndim != 1 or b.ndim != 1 or len(a) != len(b):
+        raise ValueError("a and b must be one-dimensional arrays of equal length.")
+
+    n = len(a)
+
+    # Handle empty or single-element arrays.
+    if n < 2:
+        return 1.0
+
+    # Convert arbitrary label values into contiguous integer indices.
+    _, a_inverse = np.unique(a, return_inverse=True)
+    _, b_inverse = np.unique(b, return_inverse=True)
+
+    n_a = a_inverse.max() + 1
+    n_b = b_inverse.max() + 1
+
+    # -------------------------------------------------
+    # 1. Construct the contingency table.
+    # -------------------------------------------------
+
+    contingency = np.zeros((n_a, n_b), dtype=np.int64)
+
+    np.add.at(
+        contingency,
+        (a_inverse, b_inverse),
+        1
+    )
+
+    # Calculate the row sums and column sums.
+    row_sums = contingency.sum(axis=1)
+    col_sums = contingency.sum(axis=0)
+
+    # Helper: calculate the number of unordered pairs.
+    def combinations_2(x):
+        return x * (x - 1) / 2.0
+
+    # -------------------------------------------------
+    # 2. Calculate the pair-count statistics.
+    # -------------------------------------------------
+
+    # Sum of combinations of size two in each contingency cell.
+    index = combinations_2(contingency).sum()
+
+    # Sum of combinations of size two in the row and column totals.
+    sum_rows = combinations_2(row_sums).sum()
+    sum_cols = combinations_2(col_sums).sum()
+
+    # Total number of unordered pairs.
+    total_pairs = combinations_2(n)
+
+    # Expected index under random independent assignments.
+    expected_index = (sum_rows * sum_cols) / total_pairs
+
+    # -------------------------------------------------
+    # 3. Calculate the Adjusted Rand Index.
+    # -------------------------------------------------
+
+    numerator = index - expected_index
+
+    denominator = 0.5 * (sum_rows + sum_cols) - expected_index
+
+    # Handle degenerate partitions.
+    if np.isclose(denominator, 0.0, atol=1e-12):
+        return 1.0
+
+    ari = numerator / denominator
+
+    # Return the result as a Python float.
+    return float(ari)
+
