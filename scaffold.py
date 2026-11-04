@@ -178,15 +178,41 @@ def main() -> None:
     print("   MDS has no seed, but repeated eigenvalues can move its scores slightly from one machine to another.")
 
     print("\n7. The GraphEDM table (eq 23.4): L = alpha SUP + beta RECON + gamma REG")
-    t = rep["tree"]; n = rep["node_accuracy"]; l = rep["link_auc"]
-    measured = {"MDS": f"tree MAP {t['mds'][2]['map']:.2f} at d=2", "Laplacian eigenmaps": f"ARI {rep['ari']['eigenmaps_tau']:.2f} with tau",
-                "Poincare embedding": f"tree MAP {t['poincare'][2]['map']:.2f} at d=2", "DeepWalk / NetMF": f"ARI {rep['ari']['netmf']:.2f}, AUC {l['netmf']:.2f}",
-                "Label propagation": f"acc {n[10]['harmonic']:.2f} at 10/class", "Label spreading": f"acc {n[10]['spreading']:.2f} at 10/class",
-                "GCN classifier": f"acc {n[10]['gcn']:.2f} at 10/class", "GAE": f"AUC {l['gae']:.2f}, ARI {rep['ari']['gae']:.2f}",
-                "VGAE": f"AUC {rep['vgae'][1]['auc']:.2f} at kl_weight 100", "DGI": f"probe {n[10]['dgi']:.2f} at 10/class", "Planetoid": f"acc {n[10]['planetoid']:.2f} at 10/class"}
-    print(f"   {'method':20s} {'encoder':16s} {'target s(W)':24s} {'decoder':21s} {'loss':24s} {'alpha':6s} {'beta':5s} {'gamma':13s} result")
+    t = rep["tree"]
+    n = rep["node_accuracy"]
+    l = rep["link_auc"]
+
+    # These keys match the method names in GRAPH_EDM_TABLE in model.py.
+    measured = {
+        "MDS": f"tree MAP {t['mds'][2]['map']:.2f} at d=2",
+        "Laplacian eigenmaps": f"ARI {rep['ari']['eigenmaps_tau']:.2f} with tau",
+        "Poincare embedding": f"tree MAP {t['poincare'][2]['map']:.2f} at d=2",
+        "Label propagation": f"acc {n[10]['harmonic']:.2f} at 10/class",
+        "DeepWalk": "analytical context similarity; no separate score reported",
+        "NetMF": f"ARI {rep['ari']['netmf']:.2f}, AUC {l['netmf']:.2f}",
+        "GAE": f"AUC {l['gae']:.2f}, ARI {rep['ari']['gae']:.2f}",
+        "VGAE": f"AUC {rep['vgae'][1]['auc']:.2f} at kl_weight 100",
+        "DGI": f"probe {n[10]['dgi']:.2f} at 10/class",
+        "GCN classifier": f"acc {n[10]['gcn']:.2f} at 10/class",
+        "Planetoid": f"acc {n[10]['planetoid']:.2f} at 10/class",
+    }
+
+    print(
+        f"   {'method':20s} {'encoder':16s} {'target s(W)':24s} "
+        f"{'decoder':21s} {'loss':24s} {'alpha':6s} "
+        f"{'beta':5s} {'gamma':13s} result"
+    )
+
     for row in rep["table"]:
-        print(f"   {row['method']:20s} {row['encoder']:16s} {row['target']:24s} {row['decoder']:21s} {row['loss']:24s} {str(row['alpha']):6s} {str(row['beta']):5s} {str(row['gamma']):13s} {measured[row['method']]}")
+        method = row["method"]
+        result = measured.get(method, "No separate metric reported")
+        print(
+            f"   {method:20s} {row['encoder']:16s} "
+            f"{row['target']:24s} {row['decoder']:21s} "
+            f"{row['loss']:24s} {str(row['alpha']):6s} "
+            f"{str(row['beta']):5s} {str(row['gamma']):13s} "
+            f"{result}"
+        )
 
     print(f"\nstudy finished in {time.time() - t0:.0f} s")
 
