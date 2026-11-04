@@ -894,14 +894,8 @@ def edm_fit(
 
     history = []
 
-    # Preserve the previous tinygrad training state.
-    had_training_attribute = hasattr(Tensor, "training")
-    previous_training = getattr(Tensor, "training", False)
-
-    # Enable training mode for the optimizer.
-    Tensor.training = True
-
-    try:
+    # Keep the training loop in one place for both tinygrad APIs.
+    def run_training_loop():
         for t in range(steps):
 
             # Generate a fresh minibatch for every iteration.
@@ -929,12 +923,18 @@ def edm_fit(
                     (int(t), float(loss.item()))
                 )
 
-    finally:
-        # Restore the previous tinygrad training state.
-        if had_training_attribute:
+    # Support both the older Tensor.training API and the newer
+    # TRAINING ContextVar API used by tinygrad 0.14 and later.
+    if hasattr(Tensor, "training"):
+        previous_training = Tensor.training
+        Tensor.training = True
+        try:
+            run_training_loop()
+        finally:
             Tensor.training = previous_training
-        else:
-            delattr(Tensor, "training")
+    else:
+        with Context(TRAINING=1):
+            run_training_loop()
 
     return history
 
