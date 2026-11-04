@@ -1382,3 +1382,183 @@ def train_gae(split, X, hidden=32, dim=16, loss="sampled", steps=200, lr=0.01, s
         "hist": hist
     }
 
+# Step 18 - train_vgae
+def gaussian_kl(mu, logvar):
+    # Calculate the KL divergence between:
+    # N(mu, diag(exp(logvar))) and N(0, I).
+
+    # Element-wise Gaussian KL contribution:
+    # mu^2 + exp(logvar) - 1 - logvar.
+    kl = (
+        mu * mu
+        + logvar.exp()
+        - 1.0
+        - logvar
+    )
+
+    # Sum over latent dimensions and average over nodes.
+    return 0.5 * kl.sum(axis=1).mean()
+
+
+def train_vgae(split, X, hidden=32, dim=16, kl_weight=1.0, steps=200, lr=0.01, seed=0):
+
+    # Get the number of nodes.
+    N = X.shape[0]
+
+    # 1. Prepare the training adjacency matrix and node features.
+    # Only A_train is allowed to reach the encoder.
+    Ahat = Tensor(
+        gcn_normalize(split["A_train"])
+    ).realize()
+
+    Xt = Tensor(
+        np.asarray(X, dtype=np.float32)
+    ).realize()
+
+    # Create the shared two-layer GCN encoder.
+    enc = GCNEncoder(
+        X.shape[1],
+        hidden,
+        dim,
+        seed=seed
+    )
+
+    # Initialize the additional log-variance weight matrix
+    # using an independent random number generator.
+    rng_w3 = np.random.default_rng(seed + 1000)
+
+    W3 = glorot(
+        rng_w3,
+        hidden,
+        dim
+    )
+
+    # 2. Convert training positive edges into an int32 Tensor.
+    pos = Tensor(
+        np.asarray(split["train"], dtype=np.int32)
+    ).contiguous().realize()
+
+    # Number of positive training edges.
+    m = len(split["train"])
+
+    # -------------------------------------------------
+    # Define the shared variational encoder.
+    # -------------------------------------------------
+
+    def latent_stats():
+        # First shared GCN hidden representation.
+        # H = A_hat @ ReLU(A_hat @ X @ W1).
+        H = Ahat @ enc.hidden_layer(Ahat, Xt)
+
+        # Mean of the Gaussian latent distribution.
+        mu = H @ enc.W2
+
+        # Log-variance, clipped for numerical stability.
+        logvar = (H @ W3).clip(-10.0, 10.0)
+
+        return mu, logvar
+
+    # -------------------------------------------------
+    # 3. Generate fresh negative edges and noise.
+    # -------------------------------------------------
+
+    def batch_fn(rng):
+        # Sample m negative node pairs.
+        neg = rng.integers(
+            0,
+            N,
+            size=(m, 2),
+            dtype=np.int32
+        )
+
+        # Sample Gaussian noise for reparameterization.
+        eps = rng.normal(
+            0.0,
+            1.0,
+            size=(N, dim)
+        ).astype(np.float32)
+
+        return neg, eps
+
+    # -------------------------------------------------
+    # 4. Variational reconstruction loss.
+    # -------------------------------------------------
+
+    def recon(neg, eps):
+        # Compute the current Gaussian parameters.
+        mu, logvar = latent_stats()
+
+        # Reparameterization trick:
+        # z = mu + sigma * eps.
+        sigma = (0.5 * logvar).exp()
+
+        z = mu + sigma * eps
+
+        # Calculate sampled reconstruction loss.
+        return gae_sampled_loss(
+            z,
+            pos,
+            neg
+        )
+
+    # -------------------------------------------------
+    # 5. KL regularization loss.
+    # -------------------------------------------------
+
+    def reg():
+        # Obtain the current Gaussian parameters.
+        mu, logvar = latent_stats()
+
+        # Return the KL divergence divided by N,
+        # as explicitly required by the instructions.
+        return gaussian_kl(mu, logvar) / N
+
+    # -------------------------------------------------
+    # 6. Train using the shared GraphEDM trainer.
+    # -------------------------------------------------
+
+    hist = edm_fit(
+        [enc.W1, enc.W2, W3],
+        alpha=0.0,
+        beta=1.0,
+        gamma=kl_weight,
+        recon=recon,
+        reg=reg,
+        batch_fn=batch_fn,
+        steps=steps,
+        lr=lr,
+        seed=seed
+    )
+
+    # -------------------------------------------------
+    # 7. Extract the final latent distribution.
+    # -------------------------------------------------
+
+    mu_t, logvar_t = latent_stats()
+
+    # Convert final Tensor values into NumPy arrays.
+    mu_np = mu_t.realize().numpy()
+    logvar_np = logvar_t.realize().numpy()
+
+    mu_np = np.asarray(mu_np, dtype=np.float32)
+    logvar_np = np.asarray(logvar_np, dtype=np.float32)
+
+    # Calculate the mean KL contribution of each
+    # latent dimension across all nodes.
+    kl_per_dim = 0.5 * np.mean(
+        mu_np ** 2
+        + np.exp(logvar_np)
+        - 1.0
+        - logvar_np,
+        axis=0
+    )
+
+    # Return the final variational parameters,
+    # per-dimension KL values, and training history.
+    return {
+        "mu": mu_np,
+        "logvar": logvar_np,
+        "kl_per_dim": kl_per_dim,
+        "hist": hist
+    }
+
