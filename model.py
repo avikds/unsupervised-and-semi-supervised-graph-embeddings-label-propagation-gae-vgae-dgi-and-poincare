@@ -2485,3 +2485,133 @@ def train_tree_embedding(A, dim=2, geometry="poincare", steps=2000, lr=10.0, K=2
         history
     )
 
+# Step 28 - reconstruction_metrics
+def pairwise_distances(Z, geometry):
+    # Convert the embedding matrix to float64.
+    Z = np.asarray(Z, dtype=np.float64)
+
+    # Calculate pairwise squared Euclidean distances.
+    diff = Z[:, None, :] - Z[None, :, :]
+    squared_distances = np.sum(diff ** 2, axis=-1)
+
+    # Euclidean geometry.
+    if geometry == "euclidean":
+        D = np.sqrt(squared_distances)
+
+    # Poincare hyperbolic geometry.
+    elif geometry == "poincare":
+        # Calculate squared norms of all embeddings.
+        norm_sq = np.sum(Z ** 2, axis=1)
+
+        # Calculate the denominator:
+        # (1 - ||u||^2) * (1 - ||v||^2).
+        denominator = (
+            (1.0 - norm_sq[:, None])
+            * (1.0 - norm_sq[None, :])
+        )
+
+        # Calculate the argument of arccosh.
+        x = 1.0 + 2.0 * squared_distances / denominator
+
+        # Clip the argument from below at 1 for numerical stability.
+        x = np.maximum(x, 1.0)
+
+        # Calculate the Poincare distance.
+        D = np.arccosh(x)
+
+    else:
+        raise ValueError(
+            "geometry must be either 'euclidean' or 'poincare'."
+        )
+
+    # Return the float64 pairwise distance matrix.
+    return np.asarray(D, dtype=np.float64)
+
+
+def reconstruction_metrics(D, A):
+    # Convert inputs to NumPy arrays.
+    D = np.asarray(D, dtype=np.float64)
+    A = np.asarray(A)
+
+    # Get the number of nodes.
+    N = A.shape[0]
+
+    # Validate input dimensions.
+    if A.shape != (N, N) or D.shape != (N, N):
+        raise ValueError("A and D must be square matrices of the same shape.")
+
+    # Store all neighbour ranks and per-node average precisions.
+    all_ranks = []
+    average_precisions = []
+
+    # Evaluate each node independently.
+    for u in range(N):
+
+        # Identify the neighbours of node u.
+        # Self-connections are excluded.
+        neighbours_mask = (A[u] > 0)
+        neighbours_mask[u] = False
+
+        neighbours = np.flatnonzero(neighbours_mask)
+
+        # Skip nodes without neighbours.
+        if len(neighbours) == 0:
+            continue
+
+        # Identify all non-neighbours, excluding node u itself.
+        nonneighbours_mask = (A[u] <= 0)
+        nonneighbours_mask[u] = False
+
+        nonneighbours = np.flatnonzero(nonneighbours_mask)
+
+        # Distance from node u to its neighbours.
+        neighbour_distances = D[u, neighbours]
+
+        # Distance from node u to all non-neighbours.
+        nonneighbour_distances = D[u, nonneighbours]
+
+        # Rank each neighbour:
+        # 1 + number of non-neighbours strictly closer to u.
+        ranks = (
+            1
+            + np.sum(
+                nonneighbour_distances[:, None]
+                < neighbour_distances[None, :],
+                axis=0
+            )
+        )
+
+        # Collect all neighbour ranks for mean-rank calculation.
+        all_ranks.extend(ranks.tolist())
+
+        # Sort neighbour ranks in increasing order.
+        sorted_ranks = np.sort(ranks)
+
+        # Calculate Average Precision for node u.
+        num_neighbours = len(sorted_ranks)
+
+        k = np.arange(1, num_neighbours + 1)
+
+        # Position of the kth neighbour in the combined ordering.
+        positions = sorted_ranks + k - 1
+
+        # Precision at each relevant neighbour position.
+        precisions = k / positions
+
+        # Mean Average Precision for node u.
+        ap = np.mean(precisions)
+
+        average_precisions.append(float(ap))
+
+    # Handle graphs without any nodes having neighbours.
+    if len(all_ranks) == 0:
+        return 0.0, 0.0
+
+    # Mean rank across all neighbour edges.
+    mean_rank = float(np.mean(all_ranks))
+
+    # Mean Average Precision across nodes having neighbours.
+    mean_ap = float(np.mean(average_precisions))
+
+    return mean_rank, mean_ap
+
