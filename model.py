@@ -116,3 +116,59 @@ def few_labels(y, n_per_class, seed=0):
     # Return labeled and unlabeled node indices.
     return labeled, rest
 
+# Step 3 - balanced_tree
+def balanced_tree(b, depth):
+    # Validate the branching factor and tree depth.
+    if b < 1:
+        raise ValueError("The branching factor b must be at least 1.")
+    if depth < 0:
+        raise ValueError("The tree depth must be non-negative.")
+
+    # Calculate the total number of nodes across all levels.
+    N = sum(b ** level for level in range(depth + 1))
+
+    # Initialize the adjacency matrix, parent array, and level array.
+    A = np.zeros((N, N), dtype=np.float64)
+    parent = np.full(N, -1, dtype=np.int64)
+    level = np.zeros(N, dtype=np.int64)
+
+    # Assign parents and levels using breadth-first node numbering.
+    for v in range(1, N):
+        # In breadth-first numbering, each node's parent is (v - 1) // b.
+        p = (v - 1) // b
+
+        parent[v] = p
+        level[v] = level[p] + 1
+
+        # Add an undirected edge between the node and its parent.
+        A[v, p] = 1.0
+        A[p, v] = 1.0
+
+    # Return the adjacency matrix, parent array, and level array.
+    return A, parent, level
+
+
+def tree_distances(parent):
+    # Convert the parent array to int64.
+    parent = np.asarray(parent, dtype=np.int64)
+
+    # Get the total number of nodes.
+    N = len(parent)
+
+    # Initialize the all-pairs distance matrix.
+    D = np.zeros((N, N), dtype=np.int64)
+
+    # Calculate distances using the parent-before-child ordering.
+    for v in range(1, N):
+        p = parent[v]
+
+        # Distance from v to every previously numbered node u:
+        # d(v, u) = d(parent(v), u) + 1.
+        D[v, :v] = D[p, :v] + 1
+
+        # Copy distances to the upper triangle to ensure symmetry.
+        D[:v, v] = D[v, :v]
+
+    # Return the symmetric all-pairs shortest-path distance matrix.
+    return D
+
