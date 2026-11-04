@@ -1562,3 +1562,46 @@ def train_vgae(split, X, hidden=32, dim=16, kl_weight=1.0, steps=200, lr=0.01, s
         "hist": hist
     }
 
+# Step 19 - dgi_loss
+def readout(Z):
+    # Calculate the mean embedding across all nodes.
+    mean_embedding = Z.mean(axis=0)
+
+    # Apply sigmoid to obtain the graph-level summary vector.
+    summary = mean_embedding.sigmoid()
+
+    return summary
+
+
+def dgi_loss(Z, Z_neg, Wb, fake_summary=False):
+    # Calculate the summary vector from the real graph.
+    # The positive term always uses this summary.
+    s = readout(Z)
+
+    # Choose the summary vector for the negative term.
+    if fake_summary:
+        # Use the summary of the corrupted graph.
+        s_neg = readout(Z_neg)
+    else:
+        # Use the real graph summary, as in the original DGI.
+        s_neg = s
+
+    # Bilinear discriminator for real node embeddings:
+    # logits_i = Z_i.T @ Wb @ s.
+    real_logits = ((Z @ Wb) * s).sum(axis=1)
+
+    # Bilinear discriminator for corrupted node embeddings:
+    # logits_i = Z_neg_i.T @ Wb @ s_neg.
+    neg_logits = ((Z_neg @ Wb) * s_neg).sum(axis=1)
+
+    # Positive loss: maximize log D(Z_i, s).
+    positive_loss = real_logits.logsigmoid().mean()
+
+    # Negative loss: maximize log(1 - D(Z_neg_i, s_neg)).
+    negative_loss = (-neg_logits).logsigmoid().mean()
+
+    # Return the averaged Deep Graph Infomax objective.
+    loss = -0.5 * (positive_loss + negative_loss)
+
+    return loss
+
