@@ -2796,7 +2796,6 @@ def average_distortion(D_emb, D_true):
 # Step 30 - graph_embeddings_report
 import time
 
-
 GRAPH_EDM_TABLE = [
     {
         "method": "MDS",
@@ -3009,6 +3008,14 @@ def graph_embeddings_report(seed=0, n=1000, scale=1.0, tree=(3, 5)):
 
     A_train = np.asarray(
         split["A_train"], dtype=np.float64
+    )
+
+    # Fit a separate NetMF model using training edges only.
+    # The full-graph Zs/Zt above remain available for the
+    # unsupervised clustering experiment, but must not be used
+    # to evaluate held-out link prediction.
+    Zs_link, Zt_link = netmf_embedding(
+        A_train, T=5, b=1.0, dim=16
     )
 
     # =====================================================
@@ -3307,9 +3314,9 @@ def graph_embeddings_report(seed=0, n=1000, scale=1.0, tree=(3, 5)):
         pair_auc(eigen_scores, test_pos, test_neg)
     )
 
-    # NetMF.
+    # NetMF fitted only on the training graph.
     link_auc["netmf"] = float(
-        pair_auc(Zs @ Zt.T, test_pos, test_neg)
+        pair_auc(Zs_link @ Zt_link.T, test_pos, test_neg)
     )
 
     # Train a separate leak-free GAE for link prediction.
