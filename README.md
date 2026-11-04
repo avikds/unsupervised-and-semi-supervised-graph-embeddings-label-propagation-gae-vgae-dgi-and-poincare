@@ -140,7 +140,8 @@ Main graph: 2469 edges, homophily 0.800, 26 isolated nodes, largest degree 46
    Poincare wins MAP at every dimension tried and mean rank at d=2. At d=5 Euclidean has the better mean rank.
    MDS at d=10 has the lowest distortion of all, yet poor local ranking. The loss does not put the root at the origin.
    MDS has no seed, but repeated eigenvalues can move its scores slightly from one machine to another.
-\n7. The GraphEDM table (eq 23.4): L = alpha SUP + beta RECON + gamma REG
+
+7. The GraphEDM table (eq 23.4): L = alpha SUP + beta RECON + gamma REG
    method               encoder          target s(W)              decoder               loss                     alpha  beta  gamma         result
    MDS                  Spectral decomposition Pairwise distances       Euclidean distance    Classical distance reconstruction 0      0     0             tree MAP 0.04 at d=2
    Laplacian eigenmaps  Graph Laplacian eigenvectors Graph structure          Euclidean distance    Laplacian energy         0      0     0             ARI 0.76 with tau
@@ -153,5 +154,6 @@ Main graph: 2469 edges, homophily 0.800, 26 isolated nodes, largest degree 46
    DGI                  GCN              Graph summary            Bilinear discriminator Contrastive information loss 0      1     0             probe 0.92 at 10/class
    GCN classifier       GCN              Node labels              Softmax               Cross-entropy            1      0     1             acc 0.92 at 10/class
    Planetoid            Feature and context lookup Labels and context pairs Softmax + context dot product Classification + context reconstruction 1      1     1             acc 0.62 at 10/class
-\nstudy finished in 516 s
+
+study finished in 555 s
 ```
