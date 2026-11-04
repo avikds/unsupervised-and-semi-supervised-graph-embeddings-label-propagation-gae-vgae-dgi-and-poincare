@@ -903,3 +903,87 @@ def edm_fit(params, sup=None, recon=None, reg=None, alpha=1.0, beta=1.0, gamma=0
 
     return history
 
+# Step 13 - GCNEncoder
+def gcn_normalize(A):
+    # Convert the adjacency matrix to a NumPy array.
+    A = np.asarray(A, dtype=np.float64)
+
+    # Get the number of nodes.
+    n = A.shape[0]
+
+    # Add self-loops to every node.
+    A_tilde = A + np.eye(n, dtype=np.float64)
+
+    # Calculate the degree of each node.
+    degree = A_tilde.sum(axis=1)
+
+    # Calculate inverse square-root degrees.
+    inv_sqrt_degree = np.zeros(n, dtype=np.float64)
+
+    np.divide(
+        1.0,
+        np.sqrt(degree),
+        out=inv_sqrt_degree,
+        where=degree > 0
+    )
+
+    # Apply symmetric degree normalization:
+    # A_hat = D^(-1/2) @ (A + I) @ D^(-1/2).
+    A_hat = (
+        inv_sqrt_degree[:, None]
+        * A_tilde
+        * inv_sqrt_degree[None, :]
+    )
+
+    # Return the normalized adjacency matrix as float32.
+    return A_hat.astype(np.float32)
+
+
+def glorot(rng, a, b):
+    # Calculate the Glorot-uniform initialization limit.
+    limit = np.sqrt(6.0 / (a + b))
+
+    # Generate uniformly distributed weights.
+    weights = rng.uniform(
+        -1.0,
+        1.0,
+        size=(a, b)
+    ) * limit
+
+    # Convert weights to float32.
+    weights = weights.astype(np.float32)
+
+    # Convert to a contiguous, realized tinygrad Tensor.
+    return Tensor(weights).contiguous().realize()
+
+
+class GCNEncoder:
+    def __init__(self, in_dim, hidden, out_dim, seed=0):
+        # Initialize a single random number generator.
+        rng = np.random.default_rng(seed)
+
+        # Initialize the first GCN weight matrix.
+        self.W1 = glorot(rng, in_dim, hidden)
+
+        # Initialize the second GCN weight matrix using the same RNG.
+        self.W2 = glorot(rng, hidden, out_dim)
+
+    def parameters(self):
+        # Return all trainable parameters.
+        return [self.W1, self.W2]
+
+    def hidden_layer(self, Ahat, X):
+        # First graph convolution followed by ReLU activation.
+        H = (Ahat @ X @ self.W1).relu()
+
+        return H
+
+    def __call__(self, Ahat, X):
+        # Compute the hidden representations.
+        H = self.hidden_layer(Ahat, X)
+
+        # Second graph convolution produces node embeddings.
+        Z = Ahat @ H @ self.W2
+
+        return Z
+
